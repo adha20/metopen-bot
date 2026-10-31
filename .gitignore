@@ -141,3 +141,17 @@ backups/
 *.tar
 *.gz
 *.7z
+
+# =========================
+# Large Model Weights (>100MB)
+# =========================
+*.pt
+*.pth
+*.bin
+*.onnx
+data/model/*.pt
+data/model/*.pth
+
+# Scratch files
+scrip.py
+Untitled3.ipynb

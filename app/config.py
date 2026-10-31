@@ -28,8 +28,11 @@ def _parse_optional_int(raw_value: str | None) -> int | None:
     raw_value = raw_value.strip()
     if not raw_value:
         return None
-    value = int(raw_value)
-    return value or None
+    try:
+        value = int(raw_value)
+        return value or None
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -37,13 +40,29 @@ class Settings:
     base_dir: Path = BASE_DIR
     data_dir: Path = BASE_DIR / "data"
     dictionaries_dir: Path = BASE_DIR / "data" / "dictionaries"
+    model_dir: Path = BASE_DIR / "data" / "model"
+    model_weights_path: Path = BASE_DIR / "data" / "model" / "best_model_indobert_optimized.pt"
+    thresholds_path: Path = BASE_DIR / "data" / "model" / "optimal_thresholds_final.json"
+    kamusalay_path: Path = BASE_DIR / "data" / "dataset_raw" / "new_kamusalay.csv"
+
+    # API Settings
+    api_host: str = os.getenv("API_HOST", "127.0.0.1")
+    api_port: int = int(os.getenv("API_PORT", "8000"))
+    api_url: str = os.getenv("API_URL", "http://127.0.0.1:8000")
+
+    # Discord Bot Settings
     discord_bot_token: str = os.getenv("DISCORD_BOT_TOKEN", "")
     discord_guild_id: int | None = _parse_optional_int(os.getenv("DISCORD_GUILD_ID"))
     discord_allowed_channel_ids: list[int] = None  # type: ignore[assignment]
+    discord_admin_log_channel_id: int | None = _parse_optional_int(
+        os.getenv("DISCORD_ADMIN_LOG_CHANNEL_ID")
+    )
+
+    # Dashboard & Database Settings
     flask_host: str = os.getenv("FLASK_HOST", "127.0.0.1")
     flask_port: int = int(os.getenv("FLASK_PORT", "5000"))
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "app.db")
-    run_mode: str = os.getenv("RUN_MODE", "both").lower().strip()
+    run_mode: str = os.getenv("RUN_MODE", "all").lower().strip()
     dashboard_debug: bool = os.getenv("DASHBOARD_DEBUG", "true").lower() == "true"
     warning_delete_after_seconds: int = int(os.getenv("WARNING_DELETE_AFTER_SECONDS", "10"))
     kick_violation_threshold: int = int(

@@ -1,0 +1,14 @@
+{
+    "HS": 0.49,
+    "Abusive": 0.53,
+    "HS_Individual": 0.33,
+    "HS_Group": 0.69,
+    "HS_Religion": 0.53,
+    "HS_Race": 0.65,
+    "HS_Physical": 0.59,
+    "HS_Gender": 0.41,
+    "HS_Other": 0.5,
+    "HS_Weak": 0.47,
+    "HS_Moderate": 0.49,
+    "HS_Strong": 0.57
+}

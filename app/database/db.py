@@ -5,7 +5,6 @@ from typing import Any
 
 from app.config import settings
 
-
 ANALYSIS_LOG_REQUIRED_COLUMNS: dict[str, str] = {
     "user_id": "TEXT",
     "user_name": "TEXT",
@@ -14,6 +13,11 @@ ANALYSIS_LOG_REQUIRED_COLUMNS: dict[str, str] = {
     "action_taken": "TEXT NOT NULL DEFAULT ''",
     "message_deleted": "INTEGER NOT NULL DEFAULT 0",
     "user_kicked": "INTEGER NOT NULL DEFAULT 0",
+    "active_labels": "TEXT NOT NULL DEFAULT ''",
+    "severity": "TEXT NOT NULL DEFAULT ''",
+    "latency_ms": "REAL NOT NULL DEFAULT 0.0",
+    "victim_names": "TEXT NOT NULL DEFAULT ''",
+    "confidence_score": "REAL NOT NULL DEFAULT 0.0",
 }
 
 USERS_REQUIRED_COLUMNS: dict[str, str] = {
@@ -135,11 +139,11 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 raw_content TEXT NOT NULL,
                 normalized_content TEXT NOT NULL,
-                symbols TEXT NOT NULL,
-                trace TEXT NOT NULL,
-                final_state TEXT NOT NULL,
+                symbols TEXT NOT NULL DEFAULT '',
+                trace TEXT NOT NULL DEFAULT '',
+                final_state TEXT NOT NULL DEFAULT '',
                 label TEXT NOT NULL,
-                matched_keywords TEXT,
+                matched_keywords TEXT DEFAULT '',
                 user_id TEXT,
                 user_name TEXT,
                 channel_id TEXT,
@@ -151,6 +155,11 @@ def init_db() -> None:
                 action_taken TEXT NOT NULL DEFAULT '',
                 message_deleted INTEGER NOT NULL DEFAULT 0,
                 user_kicked INTEGER NOT NULL DEFAULT 0,
+                active_labels TEXT NOT NULL DEFAULT '',
+                severity TEXT NOT NULL DEFAULT '',
+                latency_ms REAL NOT NULL DEFAULT 0.0,
+                victim_names TEXT NOT NULL DEFAULT '',
+                confidence_score REAL NOT NULL DEFAULT 0.0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -197,8 +206,13 @@ def save_analysis_result(**payload: Any) -> int:
                 total_violation_points,
                 action_taken,
                 message_deleted,
-                user_kicked
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_kicked,
+                active_labels,
+                severity,
+                latency_ms,
+                victim_names,
+                confidence_score
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("raw_content", ""),
@@ -219,46 +233,55 @@ def save_analysis_result(**payload: Any) -> int:
                 payload.get("action_taken", ""),
                 1 if payload.get("message_deleted", False) else 0,
                 1 if payload.get("user_kicked", False) else 0,
+                payload.get("active_labels", ""),
+                payload.get("severity", ""),
+                float(payload.get("latency_ms", 0.0)),
+                payload.get("victim_names", ""),
+                float(payload.get("confidence_score", 0.0)),
             ),
         )
         conn.commit()
         return int(cursor.lastrowid)
 
 
-def add_violation_points(user_id: str, user_name: str, points: int) -> int:
+def record_user_violation(user_id: str, user_name: str) -> int:
+    """Mencatat 1 kali pelanggaran untuk user dan mengembalikan total jumlah pelanggaran saat ini."""
     with get_connection() as conn:
         existing = conn.execute(
-            "SELECT violation_points, violation_count FROM users WHERE user_id = ?",
+            "SELECT violation_count FROM users WHERE user_id = ?",
             (user_id,),
         ).fetchone()
 
         if existing is None:
-            total_points = max(points, 0)
-            violation_count = 1 if points > 0 else 0
+            total_violations = 1
             conn.execute(
                 """
                 INSERT INTO users (user_id, user_name, violation_points, violation_count)
-                VALUES (?, ?, ?, ?)
+                VALUES (?, ?, 1, 1)
                 """,
-                (user_id, user_name, total_points, violation_count),
+                (user_id, user_name),
             )
         else:
-            total_points = int(existing["violation_points"]) + max(points, 0)
-            violation_count = int(existing["violation_count"]) + (1 if points > 0 else 0)
+            total_violations = int(existing["violation_count"]) + 1
             conn.execute(
                 """
                 UPDATE users
                 SET user_name = ?,
-                    violation_points = ?,
                     violation_count = ?,
+                    violation_points = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE user_id = ?
                 """,
-                (user_name, total_points, violation_count, user_id),
+                (user_name, total_violations, total_violations, user_id),
             )
 
         conn.commit()
-        return total_points
+        return total_violations
+
+
+def add_violation_points(user_id: str, user_name: str, points: int = 1) -> int:
+    """Kompatibilitas mundur: mencatat pelanggaran berbasis jumlah insiden."""
+    return record_user_violation(user_id, user_name)
 
 
 def get_violation_points(user_id: str) -> int:
@@ -286,6 +309,11 @@ def fetch_recent_logs(limit: int = 50) -> list[sqlite3.Row]:
             if "total_strike_points" in columns
             else "COALESCE(total_violation_points, 0)"
         )
+        active_labels_expr = "COALESCE(active_labels, '')" if "active_labels" in columns else "''"
+        severity_expr = "COALESCE(severity, '')" if "severity" in columns else "''"
+        latency_expr = "COALESCE(latency_ms, 0.0)" if "latency_ms" in columns else "0.0"
+        victim_expr = "COALESCE(victim_names, '')" if "victim_names" in columns else "''"
+        conf_expr = "COALESCE(confidence_score, 0.0)" if "confidence_score" in columns else "0.0"
 
         query = f"""
             SELECT
@@ -308,6 +336,11 @@ def fetch_recent_logs(limit: int = 50) -> list[sqlite3.Row]:
                 action_taken,
                 message_deleted,
                 user_kicked,
+                {active_labels_expr} AS active_labels,
+                {severity_expr} AS severity,
+                {latency_expr} AS latency_ms,
+                {victim_expr} AS victim_names,
+                {conf_expr} AS confidence_score,
                 created_at
             FROM analysis_logs
             ORDER BY id DESC
@@ -335,16 +368,7 @@ def fetch_counts() -> dict[str, int]:
     with get_connection() as conn:
         total = conn.execute("SELECT COUNT(*) AS count FROM analysis_logs").fetchone()["count"]
         aman = conn.execute(
-            "SELECT COUNT(*) AS count FROM analysis_logs WHERE label = 'Aman'"
-        ).fetchone()["count"]
-        waspada = conn.execute(
-            "SELECT COUNT(*) AS count FROM analysis_logs WHERE label = 'Waspada'"
-        ).fetchone()["count"]
-        bullying = conn.execute(
-            "SELECT COUNT(*) AS count FROM analysis_logs WHERE label = 'Indikasi Bullying'"
-        ).fetchone()["count"]
-        bullying_berat = conn.execute(
-            "SELECT COUNT(*) AS count FROM analysis_logs WHERE label = 'Indikasi Bullying Berat'"
+            "SELECT COUNT(*) AS count FROM analysis_logs WHERE label LIKE '%Aman%'"
         ).fetchone()["count"]
         deleted = conn.execute(
             "SELECT COUNT(*) AS count FROM analysis_logs WHERE message_deleted = 1"
@@ -356,9 +380,6 @@ def fetch_counts() -> dict[str, int]:
     return {
         "total": int(total),
         "aman": int(aman),
-        "waspada": int(waspada),
-        "bullying": int(bullying),
-        "bullying_berat": int(bullying_berat),
         "deleted": int(deleted),
         "kicked": int(kicked),
     }
