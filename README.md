@@ -28,19 +28,6 @@ Proyek ini dibangun untuk mendeteksi ujaran kebencian (*hate speech*) dan ujaran
 
 ---
 
-## 📊 Hasil Evaluasi Model (Test Set: 1.317 Data Uji)
-
-Model dilatih pada dataset resmi **Ibrohim & Budi (2019)** (*Multi-label Hate Speech and Abusive Language Detection in Indonesian Twitter*, ACL 2019) dan dioptimasi menggunakan **Smoothed `pos_weight` Loss**, **Weight Decay AdamW**, dan **Optimal Dynamic Thresholding**:
-
-| Metrik Evaluasi | Hasil Model Kami | Baseline Ibrohim & Budi (2019) | Keterangan |
-| :--- | :---: | :---: | :--- |
-| **Hamming Accuracy** | **93.03%** | *(Tidak dilaporkan)* | Ketepatan biner per-bit sangat tinggi |
-| **Exact Match Accuracy** | **73.04%** | *(Tidak dilaporkan)* | Semua 12 label tepat serempak |
-| **Jaccard Accuracy (Samples)** | **~75.2%** | **66.12%** | **Melampaui baseline paper acuan (+9.1%)** |
-| **Macro F1-Score** | **74.33%** | ~65% - 68% | Mencegah bias pada kategori langka (SARA) |
-| **Micro F1-Score** | **79.56%** | ~75% - 77% | Performa deteksi agregat lalu lintas chat |
-| **Rata-rata Latensi Inferensi** | **~200 ms** | *(Bukan sistem real-time)* | **Memenuhi syarat SLA Discord (<1.000 ms)** |
-
 ### 12 Kategori Label yang Dideteksi:
 1. `HS`: Hate Speech (Ujaran Kebencian Umum)
 2. `Abusive`: Kata Kasar / Makian
