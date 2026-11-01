@@ -22,16 +22,31 @@ def run_api() -> None:
     )
 
 
-def run_dashboard() -> None:
-    """Menjalankan Web Dashboard Flask."""
-    print(f"🌐 Menjalankan Web Dashboard di http://{settings.flask_host}:{settings.flask_port}")
+def run_dashboard(port: int | None = None) -> None:
+    """Menjalankan Web Dashboard Flask dengan auto-fallback jika port sibuk."""
+    target_port = port or settings.flask_port
     app = create_dashboard_app()
-    app.run(
-        host=settings.flask_host,
-        port=settings.flask_port,
-        debug=settings.dashboard_debug,
-        use_reloader=False,
-    )
+    try:
+        print(f"🌐 Menjalankan Web Dashboard di http://{settings.flask_host}:{target_port}")
+        app.run(
+            host=settings.flask_host,
+            port=target_port,
+            debug=settings.dashboard_debug,
+            use_reloader=False,
+        )
+    except OSError as err:
+        if err.errno == 98 or "Address already in use" in str(err):
+            fallback_port = target_port + 1 if target_port != 5000 else 5001
+            print(f"⚠️ Port {target_port} sedang digunakan. Mengalihkan otomatis ke port cadangan {fallback_port}...")
+            print(f"🌐 Menjalankan Web Dashboard di http://{settings.flask_host}:{fallback_port}")
+            app.run(
+                host=settings.flask_host,
+                port=fallback_port,
+                debug=settings.dashboard_debug,
+                use_reloader=False,
+            )
+        else:
+            raise
 
 
 def run_bot() -> None:
@@ -56,6 +71,12 @@ def main() -> None:
         default=settings.run_mode if settings.run_mode in ["all", "api", "bot", "dashboard"] else "all",
         help="Mode layanan yang ingin dijalankan: all (default), api, bot, dashboard",
     )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port kustom untuk Web Dashboard (opsional, default: FLASK_PORT / 5000)",
+    )
     args = parser.parse_args()
     mode = args.mode
 
@@ -64,7 +85,7 @@ def main() -> None:
         return
 
     if mode == "dashboard":
-        run_dashboard()
+        run_dashboard(args.port)
         return
 
     if mode == "bot":
@@ -81,7 +102,7 @@ def main() -> None:
     api_thread.start()
 
     # 2. Thread Dashboard
-    dash_thread = threading.Thread(target=run_dashboard, daemon=True, name="Flask-Dashboard-Thread")
+    dash_thread = threading.Thread(target=run_dashboard, args=(args.port,), daemon=True, name="Flask-Dashboard-Thread")
     dash_thread.start()
 
     # 3. Main Thread: Bot Discord
