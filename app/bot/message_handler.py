@@ -1,12 +1,34 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import aiohttp
 import discord
 from discord import Forbidden, HTTPException, Member, Message, TextChannel
 
 from app.config import settings
 from app.database.db import record_user_violation, save_analysis_result
+
+
+def _resolve_clean_text(message: Message) -> str:
+    """Mengubah format mention mentah (<@123456789>) menjadi nama akun ramah dibaca (@username)."""
+    text = getattr(message, "clean_content", message.content) or message.content
+    if "<@" in text:
+        def replace_mention(match):
+            uid = match.group(1)
+            for m in getattr(message, "mentions", []):
+                if str(m.id) == uid:
+                    disp = getattr(m, "display_name", None) or getattr(m, "name", None)
+                    return f"@{disp}"
+            if getattr(message, "guild", None):
+                mem = message.guild.get_member(int(uid))
+                if mem:
+                    disp = getattr(mem, "display_name", None) or getattr(mem, "name", None)
+                    return f"@{disp}"
+            return match.group(0)
+
+        text = re.sub(r"<@!?([0-9]+)>", replace_mention, text)
+    return text
 
 
 async def _call_api_or_local(message: Message) -> dict:
@@ -128,7 +150,8 @@ async def _send_admin_alert_embed(
     embed.add_field(name="📍 Channel", value=message.channel.mention, inline=True)
 
     # Pesan Asli vs Teks yang Dinormalisasi
-    embed.add_field(name="💬 Pesan Asli (Sebelum Dihapus)", value=f"```{message.content}```", inline=False)
+    clean_original_text = _resolve_clean_text(message)
+    embed.add_field(name="💬 Pesan Asli (Sebelum Dihapus)", value=f"```{clean_original_text}```", inline=False)
     embed.add_field(name="🧹 Teks AI (Normalized)", value=f"`{result.get('cleaned_text', '-')}`", inline=False)
 
     # Label & Probabilitas
@@ -145,6 +168,11 @@ async def _send_admin_alert_embed(
     status_text = f"Pelanggaran ke-`{total_violations}` | Total: `{total_violations}/{settings.kick_violation_threshold}` kali"
     if user_kicked:
         status_text += "\n⛔ **STATUS: USER TELAH DI-KICK DARI SERVER!**"
+    elif total_violations >= settings.kick_violation_threshold:
+        if message.guild and message.author.id == message.guild.owner_id:
+            status_text += "\n⚠️ **STATUS: Pelaku adalah Pemilik Server (Discord tidak mengizinkan bot me-kick Server Owner).**"
+        else:
+            status_text += "\n⚠️ **STATUS: Bot gagal me-kick (periksa izin 'Kick Members' atau urutan role bot).**"
 
     embed.add_field(name="⚖️ Rekam Jejak Pelanggaran", value=status_text, inline=False)
     embed.set_footer(text="Human-in-the-Loop Moderation System | Powered by IndoBERT")
@@ -257,12 +285,17 @@ async def handle_incoming_message(message: Message) -> None:
 
     victims_str = ", ".join(victim_names_list)
 
+    # Bersihkan mention mentah di pesan dan nama author untuk dashboard & database
+    clean_msg_content = _resolve_clean_text(message)
+    author_disp = getattr(message.author, "display_name", None) or getattr(message.author, "name", None) or str(message.author)
+    author_name_str = f"@{author_disp}" if not author_disp.startswith("@") else author_disp
+
     save_analysis_result(
-        raw_content=message.content,
+        raw_content=clean_msg_content,
         normalized_content=result.get("cleaned_text", ""),
         label=result.get("violation_category", "Aman"),
         user_id=str(message.author.id),
-        user_name=str(message.author),
+        user_name=author_name_str,
         channel_id=str(message.channel.id),
         channel_name=getattr(message.channel, "name", ""),
         guild_id=str(message.guild.id) if message.guild else "",
