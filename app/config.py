@@ -51,7 +51,7 @@ class Settings:
     api_url: str = os.getenv("API_URL", "http://127.0.0.1:8000")
 
     # Discord Bot Settings
-    discord_bot_token: str = os.getenv("DISCORD_BOT_TOKEN", "")
+    discord_bot_token: str = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN", "")
     discord_guild_id: int | None = _parse_optional_int(os.getenv("DISCORD_GUILD_ID"))
     discord_allowed_channel_ids: list[int] = None  # type: ignore[assignment]
     discord_admin_log_channel_id: int | None = _parse_optional_int(
@@ -59,7 +59,7 @@ class Settings:
     )
 
     # Dashboard & Database Settings
-    flask_host: str = os.getenv("FLASK_HOST", "127.0.0.1")
+    flask_host: str = os.getenv("FLASK_HOST", "0.0.0.0")
     flask_port: int = int(os.getenv("FLASK_PORT", "5000"))
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "app.db")
     run_mode: str = os.getenv("RUN_MODE", "all").lower().strip()
