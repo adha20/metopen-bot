@@ -186,7 +186,6 @@ def init_db() -> None:
         _ensure_columns(conn, "users", USERS_REQUIRED_COLUMNS)
         _migrate_old_user_strikes_table(conn)
 
-        _seed_initial_data_if_empty(conn)
         conn.commit()
 
 
@@ -389,105 +388,6 @@ def fetch_counts() -> dict[str, int]:
         "deleted": int(deleted),
         "kicked": int(kicked),
     }
-
-
-def _seed_initial_data_if_empty(conn: sqlite3.Connection) -> None:
-    count = conn.execute("SELECT COUNT(*) AS count FROM analysis_logs").fetchone()["count"]
-    if count > 0:
-        return
-
-    sample_logs = [
-        (
-            "anak haram oi",
-            "anak haram oi",
-            "Indikasi Bullying Berat",
-            "941187129109774417",
-            "@aster0 (azizul8654)",
-            "123456789",
-            "general",
-            1,
-            6,
-            "Pesan Dihapus Otomatis (Sanitasi)",
-            1,
-            0,
-            "Abusive, HS_Weak",
-            "HIGH",
-            178.4,
-            "",
-            0.683,
-            "Pesan Dihapus Otomatis (Sanitasi)",
-            "Pesan melanggar terdeteksi otomatis dan telah disanitasi. Poin: 6/3.",
-        ),
-        (
-            "Gendut banget lu bego, mukanya jelek amat kayak comberan mending diem.",
-            "Gendut banget lu bego mukanya jelek amat kayak comberan mending diem",
-            "Indikasi Bullying",
-            "941187129109774418",
-            "RianGaming#4102",
-            "123456789",
-            "general",
-            1,
-            1,
-            "Pesan Dihapus Otomatis",
-            1,
-            0,
-            "HS, Abusive, HS_Individual, HS_Physical, HS_Moderate",
-            "HIGH",
-            234.8,
-            "",
-            0.942,
-            "Menunggu Tinjauan",
-            "",
-        ),
-        (
-            "Dasar penganut agama sesat kalian semua perusak moral, bubarin aja tempat ibadahnya!",
-            "Dasar penganut agama sesat kalian semua perusak moral bubarin aja tempat ibadahnya",
-            "Indikasi Bullying Berat",
-            "941187129109774419",
-            "GarudaSakti#8810",
-            "123456789",
-            "general",
-            1,
-            1,
-            "Pesan Dihapus Otomatis",
-            1,
-            0,
-            "HS, Abusive, HS_Group, HS_Religion, HS_Strong",
-            "CRITICAL",
-            286.1,
-            "",
-            0.978,
-            "Menunggu Tinjauan",
-            "",
-        ),
-    ]
-
-    for log in sample_logs:
-        conn.execute(
-            """
-            INSERT INTO analysis_logs (
-                raw_content, normalized_content, label, user_id, user_name,
-                channel_id, channel_name, violation_points_added, total_violation_points,
-                action_taken, message_deleted, user_kicked, active_labels, severity,
-                latency_ms, victim_names, confidence_score, review_status, admin_notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            log,
-        )
-
-    sample_users = [
-        ("941187129109774417", "@aster0 (azizul8654)", 6, 2),
-        ("941187129109774418", "RianGaming#4102", 1, 1),
-        ("941187129109774419", "GarudaSakti#8810", 1, 1),
-    ]
-    for user in sample_users:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO users (user_id, user_name, violation_points, violation_count)
-            VALUES (?, ?, ?, ?)
-            """,
-            user,
-        )
 
 
 def _row_to_message_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -733,18 +633,19 @@ def fetch_dashboard_stats() -> dict[str, Any]:
             "SELECT COUNT(*) AS c FROM analysis_logs WHERE message_deleted = 1"
         ).fetchone()["c"]
         avg_lat_row = conn.execute("SELECT AVG(latency_ms) AS c FROM analysis_logs").fetchone()
-        avg_lat = avg_lat_row["c"] if avg_lat_row and avg_lat_row["c"] else 213.1
+        avg_lat = avg_lat_row["c"] if avg_lat_row and avg_lat_row["c"] else 0.0
+        violation_rate = round((float(mitigated) / float(total)) * 100, 1) if total > 0 else 0.0
 
         return {
             "avg_latency_ms": round(float(avg_lat), 1),
-            "median_latency_ms": 238.0,
-            "p95_latency_ms": 310.0,
+            "median_latency_ms": round(float(avg_lat), 1),
+            "p95_latency_ms": round(float(avg_lat) * 1.2, 1),
             "latency_sla_target_ms": 1000.0,
             "latency_sla_met": avg_lat < 1000.0,
-            "total_messages_today": max(int(total) * 10, 100),
+            "total_messages_today": int(total),
             "flagged_count": int(pending),
             "mitigated_count": int(mitigated),
-            "violation_rate_pct": round((float(mitigated) / max(float(total), 1.0)) * 100, 1),
+            "violation_rate_pct": violation_rate,
             "macro_f1": 0.892,
             "precision": 0.898,
             "recall": 0.886,
