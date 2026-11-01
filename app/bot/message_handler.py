@@ -233,7 +233,29 @@ async def handle_incoming_message(message: Message) -> None:
     probs = result.get("probabilities", {})
     confidence = max(probs.values()) if probs else 0.0
     active_labels_str = ", ".join(result.get("active_labels", []))
-    victims_str = ", ".join(result.get("victim_mentions", []))
+
+    # Ekstraksi nama korban / target (resolusi Member / Mention menjadi @nama_user)
+    victim_names_list: list[str] = []
+    if message.mentions:
+        for m in message.mentions:
+            if m.id != message.author.id:
+                disp = getattr(m, "display_name", None) or getattr(m, "name", None) or str(m)
+                victim_names_list.append(f"@{disp}")
+
+    # Fallback jika message.mentions kosong tapi ada victim_mentions dari NLP engine
+    if not victim_names_list and result.get("victim_mentions"):
+        for v in result.get("victim_mentions", []):
+            if v.isdigit() and message.guild:
+                member = message.guild.get_member(int(v))
+                if member:
+                    disp = getattr(member, "display_name", None) or getattr(member, "name", None) or str(member)
+                    victim_names_list.append(f"@{disp}")
+                else:
+                    victim_names_list.append(f"@{v}")
+            else:
+                victim_names_list.append(f"@{v}" if not v.startswith("@") else v)
+
+    victims_str = ", ".join(victim_names_list)
 
     save_analysis_result(
         raw_content=message.content,

@@ -458,6 +458,14 @@ def _row_to_message_dict(
         raw_text = (row["raw_content"] or "").strip()
         in_dataset = (row["id"] in source_ids) or (raw_text in tweets)
 
+    target_raw = (row["victim_names"] or "").strip()
+    if not target_raw:
+        target_display = "Tidak ada mention spesifik (Publik)"
+    elif target_raw.isdigit():
+        target_display = f"@{target_raw}"
+    else:
+        target_display = target_raw
+
     return {
         "message_id": f"msg_{row['id']}",
         "id": row["id"],
@@ -468,7 +476,7 @@ def _row_to_message_dict(
         "author_id": row["user_id"] or "",
         "content": row["raw_content"] or "",
         "normalized_text": row["normalized_content"] or row["raw_content"] or "",
-        "target": row["victim_names"] if row["victim_names"] else "Tidak ada mention spesifik (Publik)",
+        "target": target_display,
         "latency_ms": round(float(row["latency_ms"] or 0.0), 1),
         "status": row["review_status"] or ("Pesan Dihapus Otomatis (Sanitasi)" if row["message_deleted"] else "Menunggu Tinjauan"),
         "automated_action": "Pesan Dihapus Otomatis (Sanitasi)" if row["message_deleted"] else ("Peringatan Terkirim" if row["action_taken"] else "Tidak Ada Tindakan Otomatis"),
