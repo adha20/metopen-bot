@@ -169,6 +169,111 @@
   </div>
 
   <!-- =========================================================================
+       MODAL 4: Tambah ke Dataset Pelatihan (Active Learning / Label Administrasi)
+       ========================================================================= -->
+  <div id="modal-add-dataset" class="modal-overlay hidden">
+    <div class="modal-container max-w-xl">
+      <div class="modal-header">
+        <div>
+          <h3 class="text-sm font-bold text-slate-900">Tambah ke Dataset Pelatihan</h3>
+          <div class="text-xs text-slate-500 font-code mt-0.5">Format 13-Kolom IndoBERT (re_dataset.csv)</div>
+        </div>
+        <button class="btn-dc-ghost text-base js-close-modal" title="Tutup">✕</button>
+      </div>
+
+      <div class="modal-body space-y-4">
+        <!-- Teks Kalimat Asli (Read-Only) -->
+        <div>
+          <label class="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+            Kalimat Asli (Original / Read-Only)
+          </label>
+          <div id="dataset-modal-text" class="dc-quote-box text-sm font-medium text-slate-900 bg-slate-100 border border-[var(--dc-border)] p-3 rounded select-text max-h-32 overflow-y-auto">
+            -
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1">Teks dipertahankan asli tanpa modifikasi untuk tahapan preprocessing NLP.</p>
+        </div>
+
+        <!-- 12 Label Taksonomi Checkboxes -->
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-700">
+              Administrasi 12 Label Taksonomi
+            </label>
+            <div class="flex items-center space-x-2">
+              <button type="button" id="btn-dataset-uncheck-all" class="text-[11px] text-[#5865F2] hover:underline font-semibold cursor-pointer">
+                Tandai Aman / False Positive (Semua 0)
+              </button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5 p-3 bg-slate-50 border border-[var(--dc-border)] rounded-md">
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-HS" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>HS <span class="text-[10px] text-slate-500">(Hate Speech)</span></span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-Abusive" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>Abusive <span class="text-[10px] text-slate-500">(Kasar)</span></span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-HS_Individual" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>HS_Individual</span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-HS_Group" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>HS_Group</span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-HS_Religion" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>HS_Religion</span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-HS_Race" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>HS_Race</span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-HS_Physical" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>HS_Physical</span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-HS_Gender" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>HS_Gender</span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-HS_Other" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>HS_Other</span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-HS_Weak" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>HS_Weak</span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-HS_Moderate" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>HS_Moderate</span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs font-medium text-slate-800 cursor-pointer hover:text-indigo-600">
+              <input type="checkbox" id="dataset-lbl-HS_Strong" class="rounded border-slate-300 text-[#5865F2] focus:ring-[#5865F2] w-4 h-4">
+              <span>HS_Strong</span>
+            </label>
+          </div>
+        </div>
+
+        <input type="hidden" id="dataset-modal-msg-id" value="">
+      </div>
+
+      <div class="modal-footer flex items-center justify-between">
+        <button class="btn-dc btn-dc-ghost js-close-modal">Batal</button>
+        <button id="dataset-modal-save-btn" class="btn-dc btn-dc-primary flex items-center">
+          <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+          Simpan ke Dataset
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
        KOLOM 1: Discord 72px Server Icon Rail
        ========================================================================= -->
   <nav class="server-rail">
@@ -270,6 +375,15 @@
         </button>
         <span class="text-slate-400 text-lg font-bold">#</span>
         <h1 id="viewport-title" class="text-sm font-bold text-slate-900">antrean-tinjauan</h1>
+      </div>
+      <div class="flex items-center space-x-2">
+        <a href="/api/dataset/export" download="re_dataset_contributions.csv" class="btn-dc btn-dc-secondary flex items-center text-xs py-1 px-2.5" title="Unduh dataset kontribusi format CSV 13-kolom">
+          <svg class="w-3.5 h-3.5 mr-1.5 text-[#5865F2]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+          <span>Unduh Dataset CSV</span>
+          <span id="badge-dataset-count" class="ml-1.5 px-1.5 py-0.2 bg-indigo-100 text-indigo-700 rounded-full font-bold text-[10px]">{{ dataset_count or 0 }}</span>
+        </a>
       </div>
     </header>
 
@@ -394,6 +508,9 @@
 
               <!-- Action Buttons -->
               <div class="flex items-center justify-end pt-3 border-t border-[var(--dc-border)] gap-1.5 mt-3">
+                <button class="btn-dc btn-dc-primary js-open-dataset-modal" data-message-id="{{ item.message_id }}" data-content="{{ item.content }}" data-labels='{{ item.labels | tojson }}' title="Tambah kalimat ini ke dataset pelatihan IndoBERT">
+                  + Dataset
+                </button>
                 <button class="btn-dc btn-dc-secondary js-open-detail-modal" data-message-id="{{ item.message_id }}">
                   Edit
                 </button>
@@ -493,15 +610,16 @@
                   <div class="text-xs text-slate-900 leading-relaxed">
                     "{{ msg.content }}"
                   </div>
-                  {% if msg.status == 'Menunggu Tinjauan' %}
                   <div class="flex items-center justify-end pt-1.5 border-t border-[var(--dc-border)] gap-1">
+                    <button class="btn-dc btn-dc-sm btn-dc-primary js-open-dataset-modal" data-message-id="{{ msg.message_id }}" data-content="{{ msg.content }}" data-labels='{{ msg.labels | tojson }}' title="Tambah kalimat ini ke dataset pelatihan IndoBERT">+ Dataset</button>
+                    {% if msg.status == 'Menunggu Tinjauan' %}
                     <button class="btn-dc btn-dc-sm btn-dc-secondary js-open-detail-modal" data-message-id="{{ msg.message_id }}" title="Edit Catatan">Edit Catatan</button>
                     <button class="btn-dc btn-dc-sm btn-dc-success js-review-action" data-message-id="{{ msg.message_id }}" data-action="pardon" title="Pulihkan">Pulihkan</button>
                     <button class="btn-dc btn-dc-sm btn-dc-warning js-review-action" data-message-id="{{ msg.message_id }}" data-action="warn" title="Peringatan DM Bot">Peringatan</button>
                     <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="{{ msg.message_id }}" data-action="timeout_1h" title="Timeout 1 Jam (Mute Sementara)">Timeout (1 Jam)</button>
                     <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="{{ msg.message_id }}" data-action="ban" title="Ban">Ban</button>
+                    {% endif %}
                   </div>
-                  {% endif %}
                   <div class="text-[10px] text-slate-500 pt-1.5 border-t border-slate-100 flex items-center justify-between font-code">
                     <div>
                       Tindakan bot: <strong class="text-slate-800">{{ msg.automated_action or msg.status }}</strong>
@@ -604,6 +722,9 @@
                     </td>
                     <td class="text-center">
                       <div class="flex items-center justify-center space-x-1.5">
+                        <button class="btn-dc btn-dc-sm btn-dc-primary js-open-dataset-modal" data-message-id="{{ item.message_id }}" data-content="{{ item.content }}" data-labels='{{ item.labels | tojson }}' title="Tambah ke Dataset">
+                          + Dataset
+                        </button>
                         <button class="btn-dc btn-dc-sm btn-dc-secondary js-open-detail-modal" data-message-id="{{ item.message_id }}" title="Edit">
                           Edit
                         </button>

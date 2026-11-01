@@ -186,6 +186,29 @@ def init_db() -> None:
         _ensure_columns(conn, "users", USERS_REQUIRED_COLUMNS)
         _migrate_old_user_strikes_table(conn)
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dataset_contributions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tweet TEXT NOT NULL,
+                hs INTEGER NOT NULL DEFAULT 0,
+                abusive INTEGER NOT NULL DEFAULT 0,
+                hs_individual INTEGER NOT NULL DEFAULT 0,
+                hs_group INTEGER NOT NULL DEFAULT 0,
+                hs_religion INTEGER NOT NULL DEFAULT 0,
+                hs_race INTEGER NOT NULL DEFAULT 0,
+                hs_physical INTEGER NOT NULL DEFAULT 0,
+                hs_gender INTEGER NOT NULL DEFAULT 0,
+                hs_other INTEGER NOT NULL DEFAULT 0,
+                hs_weak INTEGER NOT NULL DEFAULT 0,
+                hs_moderate INTEGER NOT NULL DEFAULT 0,
+                hs_strong INTEGER NOT NULL DEFAULT 0,
+                source_log_id INTEGER DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         conn.commit()
 
 
@@ -651,4 +674,87 @@ def fetch_dashboard_stats() -> dict[str, Any]:
             "recall": 0.886,
             "model_name": "Multi-Label Classifier",
         }
+
+
+def save_dataset_contribution(
+    tweet: str,
+    labels: dict[str, Any],
+    source_log_id: int | None = None,
+) -> int:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO dataset_contributions (
+                tweet, hs, abusive, hs_individual, hs_group,
+                hs_religion, hs_race, hs_physical, hs_gender,
+                hs_other, hs_weak, hs_moderate, hs_strong, source_log_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tweet.strip(),
+                1 if labels.get("HS") else 0,
+                1 if labels.get("Abusive") else 0,
+                1 if labels.get("HS_Individual") else 0,
+                1 if labels.get("HS_Group") else 0,
+                1 if labels.get("HS_Religion") else 0,
+                1 if labels.get("HS_Race") else 0,
+                1 if labels.get("HS_Physical") else 0,
+                1 if labels.get("HS_Gender") else 0,
+                1 if labels.get("HS_Other") else 0,
+                1 if labels.get("HS_Weak") else 0,
+                1 if labels.get("HS_Moderate") else 0,
+                1 if labels.get("HS_Strong") else 0,
+                source_log_id,
+            ),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def count_dataset_contributions() -> int:
+    with get_connection() as conn:
+        row = conn.execute("SELECT COUNT(*) AS c FROM dataset_contributions").fetchone()
+        return int(row["c"]) if row else 0
+
+
+def export_dataset_contributions_csv() -> str:
+    import csv
+    import io
+
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator="\n")
+    headers = [
+        "Tweet", "HS", "Abusive", "HS_Individual", "HS_Group",
+        "HS_Religion", "HS_Race", "HS_Physical", "HS_Gender",
+        "HS_Other", "HS_Weak", "HS_Moderate", "HS_Strong",
+    ]
+    writer.writerow(headers)
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT tweet, hs, abusive, hs_individual, hs_group,
+                   hs_religion, hs_race, hs_physical, hs_gender,
+                   hs_other, hs_weak, hs_moderate, hs_strong
+            FROM dataset_contributions
+            ORDER BY id ASC
+            """
+        ).fetchall()
+        for r in rows:
+            writer.writerow([
+                r["tweet"],
+                int(r["hs"]),
+                int(r["abusive"]),
+                int(r["hs_individual"]),
+                int(r["hs_group"]),
+                int(r["hs_religion"]),
+                int(r["hs_race"]),
+                int(r["hs_physical"]),
+                int(r["hs_gender"]),
+                int(r["hs_other"]),
+                int(r["hs_weak"]),
+                int(r["hs_moderate"]),
+                int(r["hs_strong"]),
+            ])
+    return output.getvalue()
+
 

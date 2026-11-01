@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from app.database.db import (
+    count_dataset_contributions,
     delete_analysis_log,
     execute_dashboard_review_action,
+    export_dataset_contributions_csv,
     fetch_audit_logs,
     fetch_dashboard_stats,
     fetch_flagged_queue,
@@ -12,6 +14,7 @@ from app.database.db import (
     fetch_log_by_id,
     fetch_users_summary,
     init_db,
+    save_dataset_contribution,
     update_analysis_log,
 )
 
@@ -32,6 +35,7 @@ def create_dashboard_app() -> Flask:
         audit_logs = fetch_audit_logs()
         label_dist = fetch_label_distribution()
         users_summary = fetch_users_summary()
+        dataset_count = count_dataset_contributions()
         return render_template(
             "dashboard.html",
             stats=stats,
@@ -39,6 +43,7 @@ def create_dashboard_app() -> Flask:
             audit_logs=audit_logs,
             label_dist=label_dist,
             users_summary=users_summary,
+            dataset_count=dataset_count,
         )
 
     @app.route("/api/stats")
@@ -115,5 +120,30 @@ def create_dashboard_app() -> Flask:
         if not result:
             return jsonify({"error": "Failed to execute review action"}), 404
         return jsonify(result)
+
+    @app.route("/api/dataset/add", methods=["POST"])
+    def api_dataset_add():
+        payload = request.get_json(silent=True) or {}
+        text = payload.get("text", "").strip()
+        if not text:
+            return jsonify({"error": "Teks kalimat tidak boleh kosong"}), 400
+        labels = payload.get("labels", {})
+        source_id = payload.get("source_log_id")
+        row_id = save_dataset_contribution(text, labels, source_id)
+        total = count_dataset_contributions()
+        return jsonify({"success": True, "id": row_id, "total": total})
+
+    @app.route("/api/dataset/export", methods=["GET"])
+    def api_dataset_export():
+        csv_data = export_dataset_contributions_csv()
+        return Response(
+            csv_data,
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=re_dataset_contributions.csv"},
+        )
+
+    @app.route("/api/dataset/stats", methods=["GET"])
+    def api_dataset_stats():
+        return jsonify({"total": count_dataset_contributions()})
 
     return app

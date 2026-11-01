@@ -11,6 +11,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initFilterAndSearch();
   initUserAccordion();
   initDiscordModals();
+  initDatasetModal();
   initJumpToUser();
   initTimeoutDropdown();
 });
@@ -339,6 +340,9 @@ async function reloadAuditLogs() {
             </td>
             <td class="text-center">
               <div class="flex items-center justify-center space-x-1.5">
+                <button class="btn-dc btn-dc-sm btn-dc-primary js-open-dataset-modal" data-message-id="${item.message_id}" data-content="${escapeHtml(item.content)}" data-labels='${JSON.stringify(item.labels || {})}' title="Tambah ke Dataset">
+                  + Dataset
+                </button>
                 <button class="btn-dc btn-dc-sm btn-dc-secondary js-open-detail-modal" data-message-id="${item.message_id}" title="Edit">
                   Edit
                 </button>
@@ -387,18 +391,16 @@ async function reloadUsersSummary() {
         const messagesHtml = u.messages
           .map((msg) => {
             let statusBadge = "";
-            let actionButtonsHtml = "";
+            let reviewButtonsHtml = "";
 
             if (msg.status === "Menunggu Tinjauan") {
               statusBadge = `<span class="badge badge-warning">Menunggu Tinjauan</span>`;
-              actionButtonsHtml = `
-                <div class="flex items-center justify-end pt-1.5 border-t border-[var(--dc-border)] gap-1">
-                  <button class="btn-dc btn-dc-sm btn-dc-secondary js-open-detail-modal" data-message-id="${msg.message_id}" title="Edit Catatan">Edit Catatan</button>
-                  <button class="btn-dc btn-dc-sm btn-dc-success js-review-action" data-message-id="${msg.message_id}" data-action="pardon" title="Pulihkan">Pulihkan</button>
-                  <button class="btn-dc btn-dc-sm btn-dc-warning js-review-action" data-message-id="${msg.message_id}" data-action="warn" title="Peringatan DM Bot">Peringatan</button>
-                  <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="${msg.message_id}" data-action="timeout_1h" title="Timeout 1 Jam (Mute Sementara)">Timeout (1 Jam)</button>
-                  <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="${msg.message_id}" data-action="ban" title="Ban">Ban</button>
-                </div>
+              reviewButtonsHtml = `
+                <button class="btn-dc btn-dc-sm btn-dc-secondary js-open-detail-modal" data-message-id="${msg.message_id}" title="Edit Catatan">Edit Catatan</button>
+                <button class="btn-dc btn-dc-sm btn-dc-success js-review-action" data-message-id="${msg.message_id}" data-action="pardon" title="Pulihkan">Pulihkan</button>
+                <button class="btn-dc btn-dc-sm btn-dc-warning js-review-action" data-message-id="${msg.message_id}" data-action="warn" title="Peringatan DM Bot">Peringatan</button>
+                <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="${msg.message_id}" data-action="timeout_1h" title="Timeout 1 Jam (Mute Sementara)">Timeout (1 Jam)</button>
+                <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="${msg.message_id}" data-action="ban" title="Ban">Ban</button>
               `;
             } else if (msg.status.includes("Pardon") || msg.status.includes("Dipulihkan")) {
               statusBadge = `<span class="badge badge-positive">${escapeHtml(msg.status)}</span>`;
@@ -407,6 +409,13 @@ async function reloadUsersSummary() {
             } else {
               statusBadge = `<span class="badge badge-accent">${escapeHtml(msg.status)}</span>`;
             }
+
+            const actionButtonsHtml = `
+              <div class="flex items-center justify-end pt-1.5 border-t border-[var(--dc-border)] gap-1">
+                <button class="btn-dc btn-dc-sm btn-dc-primary js-open-dataset-modal" data-message-id="${msg.message_id}" data-content="${escapeHtml(msg.content)}" data-labels='${JSON.stringify(msg.labels || {})}' title="Tambah ke Dataset">+ Dataset</button>
+                ${reviewButtonsHtml}
+              </div>
+            `;
 
             return `
               <div class="p-2.5 bg-white rounded border border-[var(--dc-border)] space-y-1.5" id="user-msg-card-${msg.message_id}">
@@ -619,6 +628,152 @@ function initDiscordModals() {
           reloadUsersSummary();
         },
       });
+    });
+  }
+}
+
+/**
+ * Active Learning / Add to Dataset Modal Handler
+ * Preserves raw text (read-only) and exports to 13-column IndoBERT format
+ */
+function initDatasetModal() {
+  const TAXONOMY_KEYS = [
+    "HS", "Abusive", "HS_Individual", "HS_Group",
+    "HS_Religion", "HS_Race", "HS_Physical", "HS_Gender",
+    "HS_Other", "HS_Weak", "HS_Moderate", "HS_Strong",
+  ];
+
+  // 1. Open Dataset Modal
+  document.addEventListener("click", (e) => {
+    const trigger = e.target.closest(".js-open-dataset-modal");
+    if (!trigger) return;
+
+    let text = trigger.getAttribute("data-content") || "";
+    // If text was JSON-stringified or escaped
+    if (text.startsWith('"') && text.endsWith('"') && text.length >= 2) {
+      try {
+        text = JSON.parse(text);
+      } catch (_) {}
+    }
+
+    // Fallback: extract quote if data-content wasn't populated
+    if (!text) {
+      const card = trigger.closest(".flagged-item-card, [id^='user-msg-card-'], tr[id^='audit-row-']");
+      if (card) {
+        const quoteEl = card.querySelector(".dc-quote-box, .leading-relaxed");
+        if (quoteEl) {
+          text = quoteEl.textContent.trim().replace(/^["']|["']$/g, "");
+        }
+      }
+    }
+
+    const msgId = trigger.getAttribute("data-message-id") || "";
+    let labels = {};
+    const labelsAttr = trigger.getAttribute("data-labels");
+    if (labelsAttr) {
+      try {
+        labels = JSON.parse(labelsAttr);
+      } catch (err) {
+        console.warn("Could not parse labels attribute:", err);
+      }
+    }
+
+    const textEl = document.getElementById("dataset-modal-text");
+    if (textEl) {
+      textEl.textContent = text;
+    }
+
+    const msgIdInput = document.getElementById("dataset-modal-msg-id");
+    if (msgIdInput) {
+      msgIdInput.value = msgId;
+    }
+
+    // Pre-populate checkboxes according to model prediction
+    TAXONOMY_KEYS.forEach((key) => {
+      const chk = document.getElementById(`dataset-lbl-${key}`);
+      if (chk) {
+        chk.checked = !!labels[key];
+      }
+    });
+
+    const modal = document.getElementById("modal-add-dataset");
+    if (modal) {
+      modal.classList.remove("hidden");
+    }
+  });
+
+  // 2. Quick Reset / Uncheck All (for False Positive active learning)
+  const uncheckAllBtn = document.getElementById("btn-dataset-uncheck-all");
+  if (uncheckAllBtn) {
+    uncheckAllBtn.addEventListener("click", () => {
+      TAXONOMY_KEYS.forEach((key) => {
+        const chk = document.getElementById(`dataset-lbl-${key}`);
+        if (chk) chk.checked = false;
+      });
+      showNotice("Semua label dinolkan (Aman / False Positive).", "info");
+    });
+  }
+
+  // 3. Save to Dataset Contribution Table
+  const saveBtn = document.getElementById("dataset-modal-save-btn");
+  if (saveBtn) {
+    saveBtn.addEventListener("click", async () => {
+      const textEl = document.getElementById("dataset-modal-text");
+      const text = textEl ? textEl.textContent.trim() : "";
+      if (!text || text === "-") {
+        alert("Teks kalimat tidak boleh kosong.");
+        return;
+      }
+
+      const msgIdInput = document.getElementById("dataset-modal-msg-id");
+      const msgId = msgIdInput && msgIdInput.value ? parseInt(msgIdInput.value, 10) : null;
+
+      const labels = {};
+      TAXONOMY_KEYS.forEach((key) => {
+        const chk = document.getElementById(`dataset-lbl-${key}`);
+        labels[key] = chk && chk.checked ? 1 : 0;
+      });
+
+      const originalText = saveBtn.innerHTML;
+      saveBtn.innerHTML = "Menyimpan...";
+      saveBtn.disabled = true;
+
+      try {
+        const res = await fetch("/api/dataset/add", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: text,
+            labels: labels,
+            source_log_id: isNaN(msgId) ? null : msgId,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert(`Gagal menyimpan ke dataset: ${err.error || "Kesalahan server"}`);
+          return;
+        }
+
+        const data = await res.json();
+        const badge = document.getElementById("badge-dataset-count");
+        if (badge && data.total !== undefined) {
+          badge.textContent = data.total;
+        }
+
+        showNotice(`Kalimat berhasil disimpan ke dataset (Total: ${data.total})!`, "success");
+
+        const modal = document.getElementById("modal-add-dataset");
+        if (modal) {
+          modal.classList.add("hidden");
+        }
+      } catch (err) {
+        console.error("Error saving dataset:", err);
+        alert("Terjadi kesalahan koneksi saat menyimpan ke dataset.");
+      } finally {
+        saveBtn.innerHTML = originalText;
+        saveBtn.disabled = false;
+      }
     });
   }
 }

@@ -57,13 +57,53 @@ def run_tests() -> None:
         print(f"      ✅ Berhasil mengubah status {test_msg_id} -> '{updated_log.get('status')}'.")
 
     # 5. Uji Integritas File Database SQLite & WAL Mode
-    print("[5/5] Memeriksa integritas SQLite & WAL Mode...")
+    print("[5/6] Memeriksa integritas SQLite & WAL Mode...")
     with get_connection() as conn:
         journal_mode = conn.execute("PRAGMA journal_mode;").fetchone()[0]
         logs_count = conn.execute("SELECT COUNT(*) FROM analysis_logs;").fetchone()[0]
         users_count = conn.execute("SELECT COUNT(*) FROM users;").fetchone()[0]
         assert journal_mode.upper() == "WAL", f"Journal mode bukan WAL: {journal_mode}"
         print(f"      ✅ Database SQLite terhubung (WAL mode: {journal_mode.upper()}, {logs_count} log, {users_count} user).")
+
+    # 6. Uji Fitur Kontribusi Dataset & Ekspor CSV 13-Kolom
+    print("[6/6] Menguji API Tambah ke Dataset & Ekspor CSV 13-Kolom...")
+    resp_add1 = client.post(
+        "/api/dataset/add",
+        json={
+            "text": "oi babi",
+            "labels": {"HS": 1, "Abusive": 1, "HS_Individual": 1, "HS_Strong": 1},
+            "source_log_id": 1,
+        },
+    )
+    assert resp_add1.status_code == 200, f"Gagal /api/dataset/add: {resp_add1.status_code}"
+    data_add1 = resp_add1.get_json()
+    assert data_add1.get("success") is True
+    print(f"      ✅ Berhasil tambah entri toksik -> id: {data_add1.get('id')}, total: {data_add1.get('total')}")
+
+    resp_add2 = client.post(
+        "/api/dataset/add",
+        json={
+            "text": "halo selamat pagi kawan-kawan semuanya",
+            "labels": {},
+            "source_log_id": None,
+        },
+    )
+    assert resp_add2.status_code == 200, f"Gagal /api/dataset/add false positive: {resp_add2.status_code}"
+    data_add2 = resp_add2.get_json()
+    assert data_add2.get("total") == data_add1.get("total") + 1
+    print(f"      ✅ Berhasil tambah entri false positive -> total: {data_add2.get('total')}")
+
+    resp_export = client.get("/api/dataset/export")
+    assert resp_export.status_code == 200
+    assert "attachment; filename=re_dataset_contributions.csv" in resp_export.headers.get("Content-Disposition", "")
+    csv_text = resp_export.data.decode("utf-8")
+    lines = csv_text.strip().split("\n")
+    expected_header = "Tweet,HS,Abusive,HS_Individual,HS_Group,HS_Religion,HS_Race,HS_Physical,HS_Gender,HS_Other,HS_Weak,HS_Moderate,HS_Strong"
+    assert lines[0] == expected_header, f"Header CSV tidak sesuai! Didapat: {lines[0]}"
+    assert len(lines) >= 3, f"Jumlah baris CSV tidak sesuai: {len(lines)}"
+    assert "oi babi,1,1,1,0,0,0,0,0,0,0,0,1" in lines[1]
+    assert "halo selamat pagi kawan-kawan semuanya,0,0,0,0,0,0,0,0,0,0,0,0" in lines[2]
+    print("      ✅ CSV Header & Kolom cocok 100% dengan format re_dataset.csv (13 kolom).")
 
     print("=" * 60)
     print("🎉 SEMUA PENGUJIAN SELESAI & BERHASIL 100%!")
