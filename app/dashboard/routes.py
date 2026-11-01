@@ -1,34 +1,119 @@
 from __future__ import annotations
 
-from flask import Flask, render_template
+from flask import Flask, jsonify, render_template, request
 
-from app.dashboard.template_filters import register_filters
-from app.database.db import fetch_counts, fetch_recent_logs, fetch_top_users
+from app.database.db import (
+    delete_analysis_log,
+    execute_dashboard_review_action,
+    fetch_audit_logs,
+    fetch_dashboard_stats,
+    fetch_flagged_queue,
+    fetch_label_distribution,
+    fetch_log_by_id,
+    fetch_users_summary,
+    init_db,
+    update_analysis_log,
+)
 
 
 def create_dashboard_app() -> Flask:
+    init_db()
+
     app = Flask(
         __name__,
         template_folder="templates",
         static_folder="static",
     )
-    register_filters(app)
 
     @app.route("/")
     def index() -> str:
-        counts = fetch_counts()
-        recent_logs = fetch_recent_logs(limit=10)
-        top_users = fetch_top_users(limit=5)
+        stats = fetch_dashboard_stats()
+        flagged = fetch_flagged_queue()
+        audit_logs = fetch_audit_logs()
+        label_dist = fetch_label_distribution()
+        users_summary = fetch_users_summary()
         return render_template(
-            "index.html",
-            counts=counts,
-            recent_logs=recent_logs,
-            top_users=top_users,
+            "dashboard.html",
+            stats=stats,
+            flagged=flagged,
+            audit_logs=audit_logs,
+            label_dist=label_dist,
+            users_summary=users_summary,
         )
 
-    @app.route("/messages")
-    def messages() -> str:
-        logs = fetch_recent_logs(limit=100)
-        return render_template("messages.html", logs=logs)
+    @app.route("/api/stats")
+    def api_stats():
+        return jsonify(fetch_dashboard_stats())
+
+    @app.route("/api/flagged-queue")
+    def api_flagged_queue():
+        return jsonify(fetch_flagged_queue())
+
+    @app.route("/api/audit-logs")
+    def api_audit_logs():
+        search = request.args.get("search")
+        label_filter = request.args.get("label_filter")
+        status_filter = request.args.get("status_filter")
+        return jsonify(
+            fetch_audit_logs(
+                search=search,
+                label_filter=label_filter,
+                status_filter=status_filter,
+            )
+        )
+
+    @app.route("/api/label-distribution")
+    def api_label_distribution():
+        return jsonify(fetch_label_distribution())
+
+    @app.route("/api/users-summary")
+    def api_users_summary():
+        return jsonify(fetch_users_summary())
+
+    @app.route("/api/messages/<message_id>", methods=["GET", "PUT", "DELETE"])
+    def api_message(message_id: str):
+        cleaned_id = message_id.replace("msg_", "")
+        raw_id = int(cleaned_id) if cleaned_id.isdigit() else 0
+        if not raw_id:
+            return jsonify({"error": "Invalid message ID"}), 400
+
+        if request.method == "GET":
+            msg = fetch_log_by_id(raw_id)
+            if not msg:
+                return jsonify({"error": "Message not found"}), 404
+            return jsonify(msg)
+
+        if request.method == "PUT":
+            payload = request.get_json(silent=True) or {}
+            updated = update_analysis_log(
+                log_id=raw_id,
+                status=payload.get("status", ""),
+                admin_notes=payload.get("admin_notes"),
+            )
+            if not updated:
+                return jsonify({"error": "Message not found"}), 404
+            return jsonify(updated)
+
+        if request.method == "DELETE":
+            deleted = delete_analysis_log(raw_id)
+            if not deleted:
+                return jsonify({"error": "Message not found"}), 404
+            return jsonify({"success": True, "message_id": message_id})
+
+    @app.route("/api/actions/review", methods=["POST"])
+    def api_review_action():
+        payload = request.get_json(silent=True) or {}
+        message_id = payload.get("message_id", "")
+        cleaned_id = str(message_id).replace("msg_", "")
+        raw_id = int(cleaned_id) if cleaned_id.isdigit() else 0
+        if not raw_id:
+            return jsonify({"error": "Invalid message ID"}), 400
+
+        action = payload.get("action", "")
+        notes = payload.get("notes")
+        result = execute_dashboard_review_action(raw_id, action, notes)
+        if not result:
+            return jsonify({"error": "Failed to execute review action"}), 404
+        return jsonify(result)
 
     return app
