@@ -11,15 +11,19 @@ from app.database.db import init_db
 
 def run_api() -> None:
     """Menjalankan Microservice AI Inference FastAPI."""
-    import uvicorn
-
-    print(f"🚀 Menjalankan FastAPI Server di http://{settings.api_host}:{settings.api_port}")
-    uvicorn.run(
-        "app.api.server:app",
-        host=settings.api_host,
-        port=settings.api_port,
-        log_level="info",
-    )
+    try:
+        import uvicorn
+        print(f"🚀 Menjalankan FastAPI Server di http://{settings.api_host}:{settings.api_port}")
+        uvicorn.run(
+            "app.api.server:app",
+            host=settings.api_host,
+            port=settings.api_port,
+            log_level="info",
+        )
+    except ModuleNotFoundError as e:
+        print(f"⚠️ [Peringatan API] Modul '{e.name}' belum terpasang. API inferensi dinonaktifkan sementara.")
+    except Exception as e:
+        print(f"⚠️ [Peringatan API] Gagal menjalankan API: {e}")
 
 
 def run_dashboard(port: int | None = None) -> None:
