@@ -189,8 +189,9 @@ class IndoBERTModerationEngine:
         # 1. Ekstrak korban / target mention (<@123456> atau @username)
         # Pola Discord mention: <@!?[0-9]+>
         victim_mentions: list[str] = re.findall(r"<@!?([0-9]+)>", text)
-        plain_mentions: list[str] = re.findall(r"@([a-zA-Z0-9_\.]+)", text)
-        all_victims = list(set(victim_mentions + plain_mentions))
+        # Cari @username hanya di luar <@id>, kalau tidak ID-nya ikut tertangkap sebagai nama (angka)
+        plain_mentions: list[str] = re.findall(r"@([a-zA-Z0-9_\.]+)", re.sub(r"<@!?[0-9]+>", " ", text))
+        all_victims = list(dict.fromkeys(victim_mentions + plain_mentions))
 
         # 2. Samarkan mention menjadi token [USER] (persis alur diagram sistem)
         cleaned = re.sub(r"<@!?([0-9]+)>", "[USER]", text)

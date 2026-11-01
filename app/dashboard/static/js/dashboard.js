@@ -13,12 +13,12 @@ document.addEventListener("DOMContentLoaded", () => {
   initDiscordModals();
   initDatasetModal();
   initJumpToUser();
-  initTimeoutDropdown();
 });
 
 // State tracking for active modals
 let currentEditMessageId = null;
 let currentUserTarget = null;
+let currentUserId = null;
 
 /**
  * Sidebar Toggle (Hide / Show 240px Channel Sidebar)
@@ -155,12 +155,45 @@ function initUserAccordion() {
   });
 }
 
+const BAN_DURATIONS = [
+  { value: 60, label: "1 Jam" },
+  { value: 120, label: "2 Jam" },
+  { value: 360, label: "6 Jam" },
+  { value: 720, label: "12 Jam" },
+  { value: 1440, label: "1 Hari" },
+  { value: 10080, label: "7 Hari" },
+  { value: 0, label: "Permanen" },
+];
+
+// Aksi yang efeknya nyata di Discord & sulit dibatalkan -> wajib lewat kartu konfirmasi
+const CONFIRM_ACTIONS = {
+  timeout_10m: { title: "Konfirmasi Timeout (10 Menit)", confirmText: "Timeout Pengguna", subtext: "Pengguna tidak bisa mengirim pesan selama 10 menit." },
+  timeout_1h: { title: "Konfirmasi Timeout (1 Jam)", confirmText: "Timeout Pengguna", subtext: "Pengguna tidak bisa mengirim pesan selama 1 jam." },
+  timeout_24h: { title: "Konfirmasi Timeout (24 Jam)", confirmText: "Timeout Pengguna", subtext: "Pengguna tidak bisa mengirim pesan selama 24 jam." },
+  kick: { title: "Konfirmasi Kick", confirmText: "Kick Pengguna", subtext: "Pengguna dikeluarkan dari server, tetapi masih bisa bergabung lagi lewat undangan." },
+  ban: { title: "Konfirmasi Ban", confirmText: "Ban Pengguna", subtext: "Pilih durasi ban. Ban sementara akan dicabut otomatis oleh bot saat waktunya habis.", durations: BAN_DURATIONS },
+};
+
+function durationLabel(minutes) {
+  const found = BAN_DURATIONS.find((d) => d.value === Number(minutes));
+  return found ? found.label : "Permanen";
+}
+
+function authorOf(btn) {
+  const userCard = btn.closest(".user-group-card");
+  if (userCard) return userCard.getAttribute("data-author") || "";
+  const jump = btn.closest(".flagged-item-card")?.querySelector(".js-jump-to-user");
+  return jump ? jump.getAttribute("data-author") || "" : "";
+}
+
 /**
  * Submit Quick Review Action to Backend
  */
-async function submitReviewAction(actionBtn, messageId, action, label, originalText) {
+async function submitReviewAction(actionBtn, messageId, action, label, originalText, durationMinutes) {
   actionBtn.innerText = "Memproses...";
   actionBtn.disabled = true;
+
+  const labelWithDuration = action === "ban" ? `${label} ${durationLabel(durationMinutes)}` : label;
 
   try {
     const res = await fetch("/api/actions/review", {
@@ -169,17 +202,20 @@ async function submitReviewAction(actionBtn, messageId, action, label, originalT
       body: JSON.stringify({
         message_id: messageId,
         action: action,
-        notes: `Aksi manual [${label}] oleh Administrator`,
+        duration_minutes: durationMinutes,
+        notes: `Aksi manual [${labelWithDuration}] oleh Administrator`,
       }),
     });
 
     if (!res.ok) {
-      const err = await res.json();
-      alert(`Gagal: ${err.detail || "Terjadi kesalahan"}`);
+      const err = await res.json().catch(() => ({}));
+      alert(`Gagal: ${err.error || "Terjadi kesalahan"}`);
       actionBtn.innerText = originalText;
       actionBtn.disabled = false;
       return;
     }
+
+    const data = await res.json();
 
     // Successful review: smoothly remove card from flagged view and refresh count
     const card = document.getElementById(`flagged-card-${messageId}`);
@@ -193,7 +229,7 @@ async function submitReviewAction(actionBtn, messageId, action, label, originalT
       }, 250);
     }
 
-    showNotice(`Pesan ${messageId} berhasil diselesaikan (${label}).`, "success");
+    showNotice(data.discord_message || `Pesan ${messageId} berhasil diselesaikan (${labelWithDuration}).`, "success");
     reloadAuditLogs();
     reloadUsersSummary();
   } catch (error) {
@@ -217,17 +253,19 @@ function initActionHandlers() {
     const label = actionBtn.innerText.trim();
     const originalText = actionBtn.innerText;
 
-    // Destructive actions like Ban trigger authentic Discord confirmation card
-    if (action === "ban") {
+    const cfg = CONFIRM_ACTIONS[action];
+    if (cfg) {
+      const author = authorOf(actionBtn);
       openConfirmModal({
-        title: "Konfirmasi Blokir (Ban)",
-        message: "Apakah Anda yakin ingin memberlakukan sanksi Ban permanen untuk pesan dan pengguna ini?",
-        quote: `ID Pesan: ${messageId}`,
-        subtext: "Pengguna akan diblokir dari server Discord dan pesan diselesaikan.",
-        confirmText: "Ban Pengguna",
+        title: cfg.title,
+        message: `Terapkan "${label}" untuk ${author || "pengguna ini"}?`,
+        quote: author ? `${author} — ${messageId}` : `ID Pesan: ${messageId}`,
+        subtext: cfg.subtext,
+        confirmText: cfg.confirmText,
         confirmClass: "btn-dc-danger",
-        onConfirm: async () => {
-          await submitReviewAction(actionBtn, messageId, action, label, originalText);
+        durations: cfg.durations || null,
+        onConfirm: async (durationMinutes) => {
+          await submitReviewAction(actionBtn, messageId, action, label, originalText, durationMinutes);
         },
       });
       return;
@@ -317,7 +355,7 @@ async function reloadAuditLogs() {
 
         const statusClass = item.status.includes("Pardon")
           ? "badge-positive"
-          : item.status.includes("Ban")
+          : /Ban|Kick|Timeout/.test(item.status)
           ? "badge-negative"
           : "badge-warning";
 
@@ -402,11 +440,12 @@ async function reloadUsersSummary() {
                 <button class="btn-dc btn-dc-sm btn-dc-success js-review-action" data-message-id="${msg.message_id}" data-action="pardon" title="Pulihkan">Pulihkan</button>
                 <button class="btn-dc btn-dc-sm btn-dc-warning js-review-action" data-message-id="${msg.message_id}" data-action="warn" title="Peringatan DM Bot">Peringatan</button>
                 <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="${msg.message_id}" data-action="timeout_1h" title="Timeout 1 Jam (Mute Sementara)">Timeout (1 Jam)</button>
-                <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="${msg.message_id}" data-action="ban" title="Ban">Ban</button>
+                <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="${msg.message_id}" data-action="kick" title="Keluarkan dari server">Kick</button>
+                <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="${msg.message_id}" data-action="ban" title="Ban (pilih durasi)">Ban</button>
               `;
             } else if (msg.status.includes("Pardon") || msg.status.includes("Dipulihkan")) {
               statusBadge = `<span class="badge badge-positive">${escapeHtml(msg.status)}</span>`;
-            } else if (msg.status.includes("Ban") || msg.status.includes("Timeout")) {
+            } else if (/Ban|Kick|Timeout/.test(msg.status)) {
               statusBadge = `<span class="badge badge-negative">${escapeHtml(msg.status)}</span>`;
             } else {
               statusBadge = `<span class="badge badge-accent">${escapeHtml(msg.status)}</span>`;
@@ -471,7 +510,7 @@ async function reloadUsersSummary() {
                   ${u.violations_count} Pelanggaran
                 </span>
 
-                <button class="btn-dc btn-dc-sm btn-dc-danger js-open-user-modal" data-user="${escapeHtml(u.author)}" data-tier="${escapeHtml(u.risk_tier)}" data-violations="${u.violations_count}">
+                <button class="btn-dc btn-dc-sm btn-dc-danger js-open-user-modal" data-user="${escapeHtml(u.author)}" data-user-id="${escapeHtml(u.author_id)}" data-tier="${escapeHtml(u.risk_tier)}" data-violations="${u.violations_count}">
                   Kelola Sanksi
                 </button>
                 <span class="accordion-chevron text-xs" ${chevronStyle}>▶</span>
@@ -512,10 +551,11 @@ function initDiscordModals() {
     if (!trigger) return;
 
     const user = trigger.getAttribute("data-user");
+    const userId = trigger.getAttribute("data-user-id");
     const tier = trigger.getAttribute("data-tier");
     const violations = trigger.getAttribute("data-violations");
 
-    openUserManageModal(user, tier, violations);
+    openUserManageModal(user, userId, tier, violations);
   });
 
   // 3. Close Modals via Close Button, Cancel Button, or Backdrop Click
@@ -562,7 +602,7 @@ function initDiscordModals() {
 
         if (!res.ok) {
           const err = await res.json();
-          alert(`Gagal menyimpan: ${err.detail || "Kesalahan server"}`);
+          alert(`Gagal menyimpan: ${err.error || "Kesalahan server"}`);
           saveBtn.innerText = originalText;
           saveBtn.disabled = false;
           return;
@@ -618,20 +658,54 @@ function initDiscordModals() {
       const actionSelect = document.getElementById("modal-user-action-select");
       const actionValue = actionSelect ? actionSelect.value : "warn";
       const actionText = actionSelect ? actionSelect.options[actionSelect.selectedIndex].text : "Sanksi";
-      const userDisplay = currentUserTarget.startsWith("@") ? currentUserTarget : `@${currentUserTarget}`;
+      const userDisplay = currentUserTarget;
+      const userId = currentUserId;
+      const reason = (document.getElementById("modal-user-action-reason")?.value || "").trim();
+
+      if (!userId) {
+        alert("ID pengguna tidak ditemukan untuk akun ini.");
+        return;
+      }
 
       openConfirmModal({
         title: `Konfirmasi Tindakan: ${actionText}`,
-        message: `Apakah Anda yakin ingin menerapkan sanksi "${actionText}" untuk ${userDisplay}?`,
+        message: `Apakah Anda yakin ingin menerapkan "${actionText}" untuk ${userDisplay}?`,
         quote: userDisplay,
-        subtext: "Tindakan sanksi akan langsung diterapkan ke akun pengguna di server.",
+        subtext: CONFIRM_ACTIONS[actionValue]?.subtext || "Tindakan akan langsung diterapkan ke akun pengguna di server.",
         confirmText: "Eksekusi Tindakan",
         confirmClass: actionValue === "pardon" ? "btn-dc-success" : actionValue === "warn" ? "btn-dc-warning" : "btn-dc-danger",
-        onConfirm: () => {
-          closeAllModals();
-          showNotice(`Tindakan "${actionText}" berhasil diterapkan untuk ${userDisplay}.`, "danger");
-          reloadAuditLogs();
-          reloadUsersSummary();
+        durations: CONFIRM_ACTIONS[actionValue]?.durations || null,
+        onConfirm: async (durationMinutes) => {
+          try {
+            const res = await fetch("/api/actions/user", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                user_id: userId,
+                action: actionValue,
+                duration_minutes: durationMinutes,
+                reason: reason,
+              }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              alert(`Gagal: ${data.error || "Terjadi kesalahan"}`);
+              return;
+            }
+
+            closeAllModals();
+            document.querySelectorAll(".flagged-item-card").forEach((card) => {
+              const jump = card.querySelector(".js-jump-to-user");
+              if (jump && jump.getAttribute("data-author") === userDisplay) card.remove();
+            });
+            updateFlaggedCount();
+            showNotice(data.discord_message || `Tindakan "${actionText}" diterapkan untuk ${userDisplay}.`, "success");
+            reloadAuditLogs();
+            reloadUsersSummary();
+          } catch (err) {
+            console.error("User action error:", err);
+            alert("Koneksi gagal saat menjalankan tindakan.");
+          }
         },
       });
     });
@@ -859,30 +933,6 @@ function initJumpToUser() {
 }
 
 /**
- * Toggle Timeout Options Dropdown Menu
- */
-function initTimeoutDropdown() {
-  document.addEventListener("click", (e) => {
-    const toggleBtn = e.target.closest(".js-toggle-timeout-options");
-    if (toggleBtn) {
-      e.stopPropagation();
-      const parent = toggleBtn.closest(".timeout-dropdown-group");
-      const menu = parent ? parent.querySelector(".timeout-options-menu") : null;
-      if (menu) {
-        // Close other open menus first
-        document.querySelectorAll(".timeout-options-menu").forEach((m) => {
-          if (m !== menu) m.classList.add("hidden");
-        });
-        menu.classList.toggle("hidden");
-      }
-      return;
-    }
-    // Close when clicking outside
-    document.querySelectorAll(".timeout-options-menu").forEach((m) => m.classList.add("hidden"));
-  });
-}
-
-/**
  * Open and Populate Message Detail & Edit Modal
  */
 async function openMessageDetailModal(messageId) {
@@ -929,7 +979,11 @@ async function openMessageDetailModal(messageId) {
     // Set status select value
     const statusSelect = document.getElementById("modal-edit-status");
     if (statusSelect) {
-      statusSelect.value = data.status || "Menunggu Tinjauan";
+      const status = data.status || "Menunggu Tinjauan";
+      if (![...statusSelect.options].some((o) => o.value === status)) {
+        statusSelect.add(new Option(status, status));
+      }
+      statusSelect.value = status;
     }
 
     // Set admin notes
@@ -946,12 +1000,13 @@ async function openMessageDetailModal(messageId) {
 /**
  * Open and Populate User Management Modal
  */
-function openUserManageModal(user, tier, violations) {
+function openUserManageModal(user, userId, tier, violations) {
   currentUserTarget = user;
+  currentUserId = userId;
   const modal = document.getElementById("modal-user-manage");
   if (!modal) return;
 
-  document.getElementById("modal-user-handle").innerText = `@${user}`;
+  document.getElementById("modal-user-handle").innerText = user;
   document.getElementById("modal-user-tier").innerText = tier || "Moderate";
   document.getElementById("modal-user-violations").innerText = `${violations || 1} Pelanggaran`;
 
@@ -971,6 +1026,7 @@ function openConfirmModal({
   subtext = "Tindakan ini tidak dapat dibatalkan.",
   confirmText = "Konfirmasi",
   confirmClass = "btn-dc-danger",
+  durations = null,
   onConfirm = null,
 } = {}) {
   const modal = document.getElementById("modal-confirm");
@@ -994,6 +1050,17 @@ function openConfirmModal({
   const subEl = document.getElementById("modal-confirm-subtext");
   if (subEl) subEl.innerText = subtext;
 
+  const durationWrap = document.getElementById("modal-confirm-duration-wrap");
+  const durationSelect = document.getElementById("modal-confirm-duration");
+  if (durationWrap && durationSelect) {
+    if (durations) {
+      durationSelect.innerHTML = durations.map((d) => `<option value="${d.value}">${escapeHtml(d.label)}</option>`).join("");
+      durationWrap.classList.remove("hidden");
+    } else {
+      durationWrap.classList.add("hidden");
+    }
+  }
+
   const confirmBtn = document.getElementById("modal-confirm-btn");
   if (confirmBtn) {
     confirmBtn.innerText = confirmText;
@@ -1005,7 +1072,7 @@ function openConfirmModal({
         const oldText = confirmBtn.innerText;
         confirmBtn.innerText = "Memproses...";
         try {
-          await onConfirm();
+          await onConfirm(durations ? Number(durationSelect.value) : undefined);
         } finally {
           confirmBtn.disabled = false;
           confirmBtn.innerText = oldText;
@@ -1027,6 +1094,7 @@ function closeAllModals() {
   document.querySelectorAll(".modal-overlay").forEach((m) => m.classList.add("hidden"));
   currentEditMessageId = null;
   currentUserTarget = null;
+  currentUserId = null;
 }
 
 /**
@@ -1048,7 +1116,7 @@ async function executeDeleteMessage(messageId) {
 
         if (!res.ok) {
           const err = await res.json();
-          alert(`Gagal menghapus pesan: ${err.detail || "Kesalahan server"}`);
+          alert(`Gagal menghapus pesan: ${err.error || "Kesalahan server"}`);
           return;
         }
 

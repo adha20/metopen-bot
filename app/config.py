@@ -38,8 +38,6 @@ def _parse_optional_int(raw_value: str | None) -> int | None:
 @dataclass(frozen=True)
 class Settings:
     base_dir: Path = BASE_DIR
-    data_dir: Path = BASE_DIR / "data"
-    dictionaries_dir: Path = BASE_DIR / "data" / "dictionaries"
     model_dir: Path = BASE_DIR / "data" / "model"
     model_weights_path: Path = BASE_DIR / "data" / "model" / "best_model_indobert_optimized.pt"
     thresholds_path: Path = BASE_DIR / "data" / "model" / "optimal_thresholds_final.json"

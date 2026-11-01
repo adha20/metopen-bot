@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from flask import Flask, Response, jsonify, render_template, request
 
+from app.bot.actions import DISCORD_ACTIONS, ActionError, run_discord_action, run_restore_message
 from app.database.db import (
+    apply_user_action,
     count_dataset_contributions,
     delete_analysis_log,
     execute_dashboard_review_action,
@@ -12,11 +14,25 @@ from app.database.db import (
     fetch_flagged_queue,
     fetch_label_distribution,
     fetch_log_by_id,
+    fetch_log_context,
+    fetch_user_context,
     fetch_users_summary,
     init_db,
     save_dataset_contribution,
     update_analysis_log,
 )
+
+
+VALID_ACTIONS = DISCORD_ACTIONS | {"pardon"}
+
+
+def _parse_duration(value) -> int | None:
+    """Menit untuk ban sementara; kosong/0 berarti permanen."""
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return None
+    return minutes if minutes > 0 else None
 
 
 def create_dashboard_app() -> Flask:
@@ -67,10 +83,6 @@ def create_dashboard_app() -> Flask:
             )
         )
 
-    @app.route("/api/label-distribution")
-    def api_label_distribution():
-        return jsonify(fetch_label_distribution())
-
     @app.route("/api/users-summary")
     def api_users_summary():
         return jsonify(fetch_users_summary())
@@ -108,18 +120,86 @@ def create_dashboard_app() -> Flask:
     @app.route("/api/actions/review", methods=["POST"])
     def api_review_action():
         payload = request.get_json(silent=True) or {}
-        message_id = payload.get("message_id", "")
-        cleaned_id = str(message_id).replace("msg_", "")
+        cleaned_id = str(payload.get("message_id", "")).replace("msg_", "")
         raw_id = int(cleaned_id) if cleaned_id.isdigit() else 0
         if not raw_id:
             return jsonify({"error": "Invalid message ID"}), 400
 
         action = payload.get("action", "")
+        if action not in VALID_ACTIONS:
+            return jsonify({"error": f"Aksi tidak dikenal: {action}"}), 400
+
+        ctx = fetch_log_context(raw_id)
+        if not ctx:
+            return jsonify({"error": "Message not found"}), 404
+
         notes = payload.get("notes")
-        result = execute_dashboard_review_action(raw_id, action, notes)
+        duration = _parse_duration(payload.get("duration_minutes"))
+
+        discord_message = ""
+        if action in DISCORD_ACTIONS:
+            try:
+                discord_message = run_discord_action(
+                    action=action,
+                    user_id=ctx["user_id"],
+                    guild_id=ctx["guild_id"],
+                    channel_id=ctx["channel_id"],
+                    duration_minutes=duration,
+                    audit_reason=notes,
+                )
+            except ActionError as err:
+                return jsonify({"error": str(err)}), err.status_code
+        elif action == "pardon":
+            # Discord tidak bisa meng-undelete pesan; bot mengirim ulang isinya. Best-effort: gagal tidak menghalangi pardon.
+            msg = fetch_log_by_id(raw_id)
+            if msg and msg["automated_action"] == "Pesan Dihapus Otomatis (Sanitasi)":
+                try:
+                    discord_message = run_restore_message(
+                        guild_id=ctx["guild_id"],
+                        channel_id=ctx["channel_id"],
+                        author=msg["author"],
+                        content=msg["content"],
+                    )
+                except ActionError as err:
+                    discord_message = f"Status dipulihkan, tapi pesan tidak bisa dikirim ulang: {err}"
+
+        result = execute_dashboard_review_action(raw_id, action, notes, duration)
         if not result:
-            return jsonify({"error": "Failed to execute review action"}), 404
+            return jsonify({"error": "Message not found"}), 404
+        result["discord_message"] = discord_message
         return jsonify(result)
+
+    @app.route("/api/actions/user", methods=["POST"])
+    def api_user_action():
+        payload = request.get_json(silent=True) or {}
+        user_id = str(payload.get("user_id", "")).strip()
+        action = payload.get("action", "")
+        if not user_id.isdigit():
+            return jsonify({"error": "ID pengguna tidak valid"}), 400
+        if action not in VALID_ACTIONS:
+            return jsonify({"error": f"Aksi tidak dikenal: {action}"}), 400
+
+        reason = (payload.get("reason") or "").strip() or None
+        duration = _parse_duration(payload.get("duration_minutes"))
+
+        discord_message = ""
+        if action in DISCORD_ACTIONS:
+            ctx = fetch_user_context(user_id)
+            try:
+                discord_message = run_discord_action(
+                    action=action,
+                    user_id=user_id,
+                    guild_id=ctx["guild_id"],
+                    channel_id=ctx["channel_id"],
+                    duration_minutes=duration,
+                    audit_reason=reason or "Sanksi manual oleh Administrator dashboard",
+                    dm_note=reason,
+                )
+            except ActionError as err:
+                return jsonify({"error": str(err)}), err.status_code
+
+        resolved = apply_user_action(user_id, action, reason, duration)
+        return jsonify({"success": True, "resolved_messages": resolved, "discord_message": discord_message})
 
     @app.route("/api/dataset/add", methods=["POST"])
     def api_dataset_add():
@@ -149,9 +229,5 @@ def create_dashboard_app() -> Flask:
             mimetype="text/csv",
             headers={"Content-Disposition": "attachment; filename=re_dataset_contributions.csv"},
         )
-
-    @app.route("/api/dataset/stats", methods=["GET"])
-    def api_dataset_stats():
-        return jsonify({"total": count_dataset_contributions()})
 
     return app

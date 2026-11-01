@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from typing import Any
 
 from app.config import settings
+from app.utils.durations import format_duration
 
 ANALYSIS_LOG_REQUIRED_COLUMNS: dict[str, str] = {
     "user_id": "TEXT",
@@ -40,14 +42,6 @@ def get_connection() -> sqlite3.Connection:
     return connection
 
 
-def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
-        (table_name,),
-    ).fetchone()
-    return row is not None
-
-
 def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     return {row[1] for row in rows}
@@ -60,82 +54,6 @@ def _ensure_columns(conn: sqlite3.Connection, table_name: str, columns: dict[str
             conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
 
 
-def _migrate_old_analysis_log_columns(conn: sqlite3.Connection) -> None:
-    columns = _table_columns(conn, "analysis_logs")
-
-    if "author_id" in columns and "user_id" in columns:
-        conn.execute(
-            """
-            UPDATE analysis_logs
-            SET user_id = COALESCE(NULLIF(user_id, ''), author_id)
-            WHERE author_id IS NOT NULL AND author_id != ''
-            """
-        )
-
-    if "author_name" in columns and "user_name" in columns:
-        conn.execute(
-            """
-            UPDATE analysis_logs
-            SET user_name = COALESCE(NULLIF(user_name, ''), author_name)
-            WHERE author_name IS NOT NULL AND author_name != ''
-            """
-        )
-
-    if "strike_points_added" in columns and "violation_points_added" in columns:
-        conn.execute(
-            """
-            UPDATE analysis_logs
-            SET violation_points_added = COALESCE(violation_points_added, strike_points_added, 0)
-            """
-        )
-
-    if "total_strike_points" in columns and "total_violation_points" in columns:
-        conn.execute(
-            """
-            UPDATE analysis_logs
-            SET total_violation_points = COALESCE(total_violation_points, total_strike_points, 0)
-            """
-        )
-
-
-def _migrate_old_user_strikes_table(conn: sqlite3.Connection) -> None:
-    if not _table_exists(conn, "user_strikes"):
-        return
-
-    old_columns = _table_columns(conn, "user_strikes")
-    old_id = "author_id" if "author_id" in old_columns else None
-    old_name = "author_name" if "author_name" in old_columns else None
-    old_points = "strike_points" if "strike_points" in old_columns else None
-    old_count = "violation_count" if "violation_count" in old_columns else None
-
-    if not all([old_id, old_name, old_points, old_count]):
-        return
-
-    rows = conn.execute(
-        f"SELECT {old_id}, {old_name}, {old_points}, {old_count}, updated_at FROM user_strikes"
-    ).fetchall()
-
-    for row in rows:
-        conn.execute(
-            """
-            INSERT INTO users (user_id, user_name, violation_points, violation_count, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                user_name = excluded.user_name,
-                violation_points = excluded.violation_points,
-                violation_count = excluded.violation_count,
-                updated_at = excluded.updated_at
-            """,
-            (
-                row[0] or "",
-                row[1] or "",
-                int(row[2] or 0),
-                int(row[3] or 0),
-                row[4],
-            ),
-        )
-
-
 def init_db() -> None:
     with get_connection() as conn:
         conn.execute(
@@ -144,11 +62,7 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 raw_content TEXT NOT NULL,
                 normalized_content TEXT NOT NULL,
-                symbols TEXT NOT NULL DEFAULT '',
-                trace TEXT NOT NULL DEFAULT '',
-                final_state TEXT NOT NULL DEFAULT '',
                 label TEXT NOT NULL,
-                matched_keywords TEXT DEFAULT '',
                 user_id TEXT,
                 user_name TEXT,
                 channel_id TEXT,
@@ -170,7 +84,6 @@ def init_db() -> None:
             """
         )
         _ensure_columns(conn, "analysis_logs", ANALYSIS_LOG_REQUIRED_COLUMNS)
-        _migrate_old_analysis_log_columns(conn)
 
         conn.execute(
             """
@@ -184,7 +97,6 @@ def init_db() -> None:
             """
         )
         _ensure_columns(conn, "users", USERS_REQUIRED_COLUMNS)
-        _migrate_old_user_strikes_table(conn)
 
         conn.execute(
             """
@@ -209,6 +121,18 @@ def init_db() -> None:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS temp_bans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                guild_id TEXT NOT NULL,
+                unban_at TEXT NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
         conn.commit()
 
 
@@ -219,11 +143,7 @@ def save_analysis_result(**payload: Any) -> int:
             INSERT INTO analysis_logs (
                 raw_content,
                 normalized_content,
-                symbols,
-                trace,
-                final_state,
                 label,
-                matched_keywords,
                 user_id,
                 user_name,
                 channel_id,
@@ -240,24 +160,20 @@ def save_analysis_result(**payload: Any) -> int:
                 latency_ms,
                 victim_names,
                 confidence_score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("raw_content", ""),
                 payload.get("normalized_content", ""),
-                payload.get("symbols", ""),
-                payload.get("trace", ""),
-                payload.get("final_state", ""),
                 payload.get("label", ""),
-                payload.get("matched_keywords", ""),
-                payload.get("user_id", payload.get("author_id", "")),
-                payload.get("user_name", payload.get("author_name", "")),
+                payload.get("user_id", ""),
+                payload.get("user_name", ""),
                 payload.get("channel_id", ""),
                 payload.get("channel_name", ""),
                 payload.get("guild_id", ""),
                 payload.get("guild_name", ""),
-                int(payload.get("violation_points_added", payload.get("strike_points_added", 0))),
-                int(payload.get("total_violation_points", payload.get("total_strike_points", 0))),
+                int(payload.get("violation_points_added", 0)),
+                int(payload.get("total_violation_points", 0)),
                 payload.get("action_taken", ""),
                 1 if payload.get("message_deleted", False) else 0,
                 1 if payload.get("user_kicked", False) else 0,
@@ -307,110 +223,36 @@ def record_user_violation(user_id: str, user_name: str) -> int:
         return total_violations
 
 
-def add_violation_points(user_id: str, user_name: str, points: int = 1) -> int:
-    """Kompatibilitas mundur: mencatat pelanggaran berbasis jumlah insiden."""
-    return record_user_violation(user_id, user_name)
-
-
-def get_violation_points(user_id: str) -> int:
+def add_temp_ban(user_id: str, guild_id: str, unban_at: datetime) -> None:
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT violation_points FROM users WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
-        return int(row["violation_points"]) if row else 0
-
-
-def fetch_recent_logs(limit: int = 50) -> list[sqlite3.Row]:
-    with get_connection() as conn:
-        columns = _table_columns(conn, "analysis_logs")
-
-        user_id_expr = "COALESCE(NULLIF(user_id, ''), author_id, '')" if "author_id" in columns else "COALESCE(user_id, '')"
-        user_name_expr = "COALESCE(NULLIF(user_name, ''), author_name, '')" if "author_name" in columns else "COALESCE(user_name, '')"
-        violation_added_expr = (
-            "COALESCE(violation_points_added, strike_points_added, 0)"
-            if "strike_points_added" in columns
-            else "COALESCE(violation_points_added, 0)"
+        conn.execute(
+            "INSERT INTO temp_bans (user_id, guild_id, unban_at) VALUES (?, ?, ?)",
+            (user_id, guild_id, unban_at.strftime("%Y-%m-%d %H:%M:%S")),
         )
-        total_violation_expr = (
-            "COALESCE(total_violation_points, total_strike_points, 0)"
-            if "total_strike_points" in columns
-            else "COALESCE(total_violation_points, 0)"
-        )
-        active_labels_expr = "COALESCE(active_labels, '')" if "active_labels" in columns else "''"
-        severity_expr = "COALESCE(severity, '')" if "severity" in columns else "''"
-        latency_expr = "COALESCE(latency_ms, 0.0)" if "latency_ms" in columns else "0.0"
-        victim_expr = "COALESCE(victim_names, '')" if "victim_names" in columns else "''"
-        conf_expr = "COALESCE(confidence_score, 0.0)" if "confidence_score" in columns else "0.0"
-
-        query = f"""
-            SELECT
-                id,
-                raw_content,
-                normalized_content,
-                symbols,
-                trace,
-                final_state,
-                label,
-                matched_keywords,
-                {user_id_expr} AS user_id,
-                {user_name_expr} AS user_name,
-                channel_id,
-                channel_name,
-                guild_id,
-                guild_name,
-                {violation_added_expr} AS violation_points_added,
-                {total_violation_expr} AS total_violation_points,
-                action_taken,
-                message_deleted,
-                user_kicked,
-                {active_labels_expr} AS active_labels,
-                {severity_expr} AS severity,
-                {latency_expr} AS latency_ms,
-                {victim_expr} AS victim_names,
-                {conf_expr} AS confidence_score,
-                created_at
-            FROM analysis_logs
-            ORDER BY id DESC
-            LIMIT ?
-        """
-        cursor = conn.execute(query, (limit,))
-        return cursor.fetchall()
+        conn.commit()
 
 
-def fetch_top_users(limit: int = 10) -> list[sqlite3.Row]:
+def cancel_temp_bans(user_id: str, guild_id: str) -> None:
     with get_connection() as conn:
-        cursor = conn.execute(
-            """
-            SELECT user_id, user_name, violation_points, violation_count, updated_at
-            FROM users
-            ORDER BY violation_points DESC, updated_at DESC
-            LIMIT ?
-            """,
-            (limit,),
+        conn.execute(
+            "UPDATE temp_bans SET done = 1 WHERE user_id = ? AND guild_id = ? AND done = 0",
+            (user_id, guild_id),
         )
-        return cursor.fetchall()
+        conn.commit()
 
 
-def fetch_counts() -> dict[str, int]:
+def fetch_due_temp_bans(now: datetime) -> list[sqlite3.Row]:
     with get_connection() as conn:
-        total = conn.execute("SELECT COUNT(*) AS count FROM analysis_logs").fetchone()["count"]
-        aman = conn.execute(
-            "SELECT COUNT(*) AS count FROM analysis_logs WHERE label LIKE '%Aman%'"
-        ).fetchone()["count"]
-        deleted = conn.execute(
-            "SELECT COUNT(*) AS count FROM analysis_logs WHERE message_deleted = 1"
-        ).fetchone()["count"]
-        kicked = conn.execute(
-            "SELECT COUNT(*) AS count FROM analysis_logs WHERE user_kicked = 1"
-        ).fetchone()["count"]
+        return conn.execute(
+            "SELECT id, user_id, guild_id FROM temp_bans WHERE done = 0 AND unban_at <= ?",
+            (now.strftime("%Y-%m-%d %H:%M:%S"),),
+        ).fetchall()
 
-    return {
-        "total": int(total),
-        "aman": int(aman),
-        "deleted": int(deleted),
-        "kicked": int(kicked),
-    }
+
+def mark_temp_ban_done(ban_id: int) -> None:
+    with get_connection() as conn:
+        conn.execute("UPDATE temp_bans SET done = 1 WHERE id = ?", (ban_id,))
+        conn.commit()
 
 
 def _get_contributed_identifiers(conn: sqlite3.Connection) -> tuple[set[int], set[str]]:
@@ -444,6 +286,9 @@ def _row_to_message_dict(
         "HS_Strong": "HS_Strong" in active_labels_list or lbl == "Indikasi Bullying Berat",
     }
     user_name = row["user_name"] or "Pengguna"
+    if not user_name.startswith("@"):
+        user_name = f"@{user_name}"
+
     avatar = user_name.replace("@", "")[:2].upper()
     channel = row["channel_name"] or "general"
     if not channel.startswith("#"):
@@ -458,13 +303,9 @@ def _row_to_message_dict(
         raw_text = (row["raw_content"] or "").strip()
         in_dataset = (row["id"] in source_ids) or (raw_text in tweets)
 
-    target_raw = (row["victim_names"] or "").strip()
-    if not target_raw:
-        target_display = "Tidak ada mention spesifik (Publik)"
-    elif target_raw.isdigit():
-        target_display = f"@{target_raw}"
-    else:
-        target_display = target_raw
+    target_display = (row["victim_names"] or "").strip() or "Tidak ada mention spesifik (Publik)"
+
+    content_clean = row["raw_content"] or ""
 
     return {
         "message_id": f"msg_{row['id']}",
@@ -474,8 +315,8 @@ def _row_to_message_dict(
         "author": user_name,
         "author_avatar": avatar,
         "author_id": row["user_id"] or "",
-        "content": row["raw_content"] or "",
-        "normalized_text": row["normalized_content"] or row["raw_content"] or "",
+        "content": content_clean,
+        "normalized_text": row["normalized_content"] or content_clean,
         "target": target_display,
         "latency_ms": round(float(row["latency_ms"] or 0.0), 1),
         "status": row["review_status"] or ("Pesan Dihapus Otomatis (Sanitasi)" if row["message_deleted"] else "Menunggu Tinjauan"),
@@ -559,22 +400,66 @@ def delete_analysis_log(log_id: int) -> bool:
         return cursor.rowcount > 0
 
 
+TIMEOUT_LABELS = {
+    "timeout_10m": "Timeout 10 Menit",
+    "timeout_1h": "Timeout 1 Jam",
+    "timeout_24h": "Timeout 24 Jam",
+}
+
+
+def _status_for_action(action: str, duration_minutes: int | None = None) -> str:
+    if action == "pardon":
+        return "Disetujui (Pardon)"
+    if action == "warn":
+        return "Sanksi Diberikan (Peringatan)"
+    if action == "kick":
+        return "Sanksi Diberikan (Kick)"
+    if action == "ban":
+        return f"Sanksi Diberikan (Ban {format_duration(duration_minutes)})"
+    if action in TIMEOUT_LABELS:
+        return f"Sanksi Diberikan ({TIMEOUT_LABELS[action]})"
+    return f"Ditindaklanjuti ({action})"
+
+
+def fetch_log_context(log_id: int) -> dict[str, str] | None:
+    """Data minimum yang dibutuhkan bot Discord untuk mengeksekusi sanksi atas satu log."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT user_id, guild_id, channel_id FROM analysis_logs WHERE id = ?", (log_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "user_id": row["user_id"] or "",
+            "guild_id": row["guild_id"] or "",
+            "channel_id": row["channel_id"] or "",
+        }
+
+
+def fetch_user_context(user_id: str) -> dict[str, str]:
+    """Guild & channel terakhir tempat user ini tercatat (untuk sanksi level akun)."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT guild_id, channel_id FROM analysis_logs
+            WHERE user_id = ? AND guild_id IS NOT NULL AND guild_id != ''
+            ORDER BY id DESC LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+        return {
+            "guild_id": row["guild_id"] if row else "",
+            "channel_id": row["channel_id"] if row else "",
+        }
+
+
 def execute_dashboard_review_action(
     log_id: int,
     action: str,
     notes: str | None = None,
+    duration_minutes: int | None = None,
 ) -> dict[str, Any] | None:
-    status_map = {
-        "pardon": "Disetujui (Pardon)",
-        "warn": "Sanksi Diberikan (Peringatan)",
-        "timeout": "Sanksi Diberikan (Timeout 10 Menit)",
-        "timeout_10m": "Sanksi Diberikan (Timeout 10 Menit)",
-        "timeout_1h": "Sanksi Diberikan (Timeout 1 Jam)",
-        "timeout_24h": "Sanksi Diberikan (Timeout 24 Jam)",
-        "kick": "Sanksi Diberikan (Kick)",
-        "ban": "Sanksi Diberikan (Ban)",
-    }
-    new_status = status_map.get(action, f"Ditindaklanjuti ({action})")
+    new_status = _status_for_action(action, duration_minutes)
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM analysis_logs WHERE id = ?", (log_id,)).fetchone()
         if not row:
@@ -591,7 +476,18 @@ def execute_dashboard_review_action(
             """,
             (new_status, notes, user_kicked, log_id),
         )
-        if action in ("warn", "timeout", "timeout_10m", "timeout_1h", "timeout_24h", "kick", "ban") and user_id:
+        if user_id and action == "pardon":
+            conn.execute(
+                """
+                UPDATE users
+                SET violation_points = MAX(violation_points - 1, 0),
+                    violation_count = MAX(violation_count - 1, 0),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            )
+        elif user_id:
             conn.execute(
                 """
                 UPDATE users
@@ -604,6 +500,38 @@ def execute_dashboard_review_action(
             )
         conn.commit()
     return fetch_log_by_id(log_id)
+
+
+def apply_user_action(
+    user_id: str,
+    action: str,
+    notes: str | None = None,
+    duration_minutes: int | None = None,
+) -> int:
+    """Sanksi level akun: seluruh pesan user yang masih menunggu tinjauan ikut diselesaikan."""
+    new_status = _status_for_action(action, duration_minutes)
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE analysis_logs
+            SET review_status = ?,
+                admin_notes = COALESCE(?, admin_notes),
+                user_kicked = CASE WHEN ? IN ('kick', 'ban') THEN 1 ELSE user_kicked END
+            WHERE user_id = ? AND review_status = 'Menunggu Tinjauan'
+            """,
+            (new_status, notes, action, user_id),
+        )
+        if action == "pardon":
+            conn.execute(
+                """
+                UPDATE users
+                SET violation_points = 0, violation_count = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            )
+        conn.commit()
+        return cursor.rowcount
 
 
 def fetch_label_distribution() -> dict[str, int]:
@@ -627,18 +555,24 @@ def fetch_users_summary() -> list[dict[str, Any]]:
     all_logs = fetch_audit_logs()
     user_map: dict[str, dict[str, Any]] = {}
     for m in all_logs:
+        user_key = m.get("author_id") or m["author"]
         author = m["author"]
-        if author not in user_map:
-            user_map[author] = {
+        avatar = m.get("author_avatar", "US")
+        if user_key not in user_map:
+            user_map[user_key] = {
                 "author": author,
-                "author_avatar": m.get("author_avatar", "US"),
+                "author_id": m.get("author_id", ""),
+                "author_avatar": avatar,
                 "total_messages": 0,
                 "violations_count": 0,
                 "accumulated_labels": set(),
                 "channels": set(),
                 "messages": [],
             }
-        user_entry = user_map[author]
+        user_entry = user_map[user_key]
+        if author.startswith("@") and not user_entry["author"].startswith("@"):
+            user_entry["author"] = author
+            user_entry["author_avatar"] = avatar
         user_entry["total_messages"] += 1
         user_entry["channels"].add(m.get("channel", "#general"))
         user_entry["messages"].append(m)
@@ -652,7 +586,7 @@ def fetch_users_summary() -> list[dict[str, Any]]:
                 user_entry["accumulated_labels"].add(lbl)
 
     summaries = []
-    for author, data in user_map.items():
+    for _, data in user_map.items():
         v_count = data["violations_count"]
         if v_count >= 2:
             risk_tier = "Pelanggar Berulang (High Risk)"
@@ -664,7 +598,8 @@ def fetch_users_summary() -> list[dict[str, Any]]:
             risk_tier = "Terbebas (Clean)"
             risk_badge = "badge-positive"
         summaries.append({
-            "author": author,
+            "author": data["author"],
+            "author_id": data["author_id"],
             "author_avatar": data["author_avatar"],
             "total_messages": data["total_messages"],
             "violations_count": v_count,

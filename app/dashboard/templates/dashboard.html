@@ -11,7 +11,7 @@
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Authentic Discord Light Theme Stylesheet -->
-  <link rel="stylesheet" href="/static/css/style.css?v=20261101_academic_light_v3">
+  <link rel="stylesheet" href="/static/css/style.css?v=20261101_academic_light_v5">
 </head>
 <body>
 
@@ -58,12 +58,13 @@
             <label class="form-label-dc" for="modal-edit-status">Status Resolusi</label>
             <select id="modal-edit-status" class="input-dc w-full">
               <option value="Menunggu Tinjauan">Menunggu Tinjauan</option>
-              <option value="Dipulihkan (Pardon)">Dipulihkan (Pardon)</option>
+              <option value="Disetujui (Pardon)">Disetujui (Pardon)</option>
               <option value="Sanksi Diberikan (Peringatan)">Sanksi Diberikan (Peringatan)</option>
               <option value="Sanksi Diberikan (Timeout 10 Menit)">Sanksi Diberikan (Timeout 10 Menit)</option>
               <option value="Sanksi Diberikan (Timeout 1 Jam)">Sanksi Diberikan (Timeout 1 Jam)</option>
               <option value="Sanksi Diberikan (Timeout 24 Jam)">Sanksi Diberikan (Timeout 24 Jam)</option>
-              <option value="Sanksi Diberikan (Ban)">Sanksi Diberikan (Ban)</option>
+              <option value="Sanksi Diberikan (Kick)">Sanksi Diberikan (Kick)</option>
+              <option value="Sanksi Diberikan (Ban Permanen)">Sanksi Diberikan (Ban Permanen)</option>
             </select>
           </div>
 
@@ -119,7 +120,7 @@
             <option value="timeout_1h">Timeout 1 Jam</option>
             <option value="timeout_24h">Timeout 24 Jam</option>
             <option value="kick">Keluarkan (Kick)</option>
-            <option value="ban">Blokir (Ban)</option>
+            <option value="ban">Blokir (Ban) — pilih durasi</option>
             <option value="pardon">Pulihkan Akun (Clear Infractions)</option>
           </select>
         </div>
@@ -154,6 +155,11 @@
 
         <div id="modal-confirm-quote-box" class="p-3 bg-slate-50 border-l-4 border-[#5865F2] rounded text-xs text-slate-800 hidden">
           <span id="modal-confirm-quote"></span>
+        </div>
+
+        <div id="modal-confirm-duration-wrap" class="hidden">
+          <label class="form-label-dc" for="modal-confirm-duration">Durasi</label>
+          <select id="modal-confirm-duration" class="input-dc w-full"></select>
         </div>
 
         <p id="modal-confirm-subtext" class="text-xs text-slate-500">
@@ -392,6 +398,12 @@
         <!-- 4 KPI Metrics Bar -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div class="kpi-metric-card">
+            <div class="text-[11px] text-slate-500 font-medium mb-1">Antrean Human-in-the-Loop</div>
+            <div id="kpi-flagged-count" class="text-xl font-bold text-amber-600 num-tabular">{{ stats.flagged_count }} Pesan</div>
+            <div class="text-[11px] text-slate-500 mt-1">Menunggu konfirmasi admin</div>
+          </div>
+
+          <div class="kpi-metric-card">
             <div class="text-[11px] text-slate-500 font-medium mb-1">Total Dianalisis</div>
             <div class="text-xl font-bold text-slate-900 num-tabular">{{ stats.total_messages_today }}</div>
             <div class="text-[11px] text-slate-500 mt-1">Pesan hari ini</div>
@@ -407,12 +419,6 @@
             <div class="text-[11px] text-slate-500 font-medium mb-1">Latensi Inferensi</div>
             <div class="text-xl font-bold text-green-600 num-tabular">{{ stats.avg_latency_ms }} ms</div>
             <div class="text-[11px] text-slate-500 mt-1">Rata-rata waktu respons</div>
-          </div>
-
-          <div class="kpi-metric-card">
-            <div class="text-[11px] text-slate-500 font-medium mb-1">Antrean Human-in-the-Loop</div>
-            <div id="kpi-flagged-count" class="text-xl font-bold text-amber-600 num-tabular">{{ stats.flagged_count }} Pesan</div>
-            <div class="text-[11px] text-slate-500 mt-1">Menunggu konfirmasi admin</div>
           </div>
         </div>
 
@@ -525,7 +531,10 @@
                 <button class="btn-dc btn-dc-danger js-review-action" data-message-id="{{ item.message_id }}" data-action="timeout_1h" title="Timeout 1 Jam (Mute Sementara)">
                   Timeout (1 Jam)
                 </button>
-                <button class="btn-dc btn-dc-danger js-review-action" data-message-id="{{ item.message_id }}" data-action="ban">
+                <button class="btn-dc btn-dc-danger js-review-action" data-message-id="{{ item.message_id }}" data-action="kick" title="Keluarkan dari server">
+                  Kick
+                </button>
+                <button class="btn-dc btn-dc-danger js-review-action" data-message-id="{{ item.message_id }}" data-action="ban" title="Ban (pilih durasi)">
                   Ban
                 </button>
               </div>
@@ -585,7 +594,7 @@
                   </span>
 
                   <!-- Action & Chevron -->
-                  <button class="btn-dc btn-dc-sm btn-dc-danger js-open-user-modal" data-user="{{ u.author }}" data-tier="{{ u.risk_tier }}" data-violations="{{ u.violations_count }}">
+                  <button class="btn-dc btn-dc-sm btn-dc-danger js-open-user-modal" data-user="{{ u.author }}" data-user-id="{{ u.author_id }}" data-tier="{{ u.risk_tier }}" data-violations="{{ u.violations_count }}">
                     Kelola Sanksi
                   </button>
                   <span class="accordion-chevron text-xs">▶</span>
@@ -603,7 +612,7 @@
                       <span class="badge badge-warning">Menunggu Tinjauan</span>
                     {% elif 'Pardon' in msg.status or 'Dipulihkan' in msg.status %}
                       <span class="badge badge-positive">{{ msg.status }}</span>
-                    {% elif 'Ban' in msg.status or 'Timeout' in msg.status %}
+                    {% elif 'Ban' in msg.status or 'Kick' in msg.status or 'Timeout' in msg.status %}
                       <span class="badge badge-negative">{{ msg.status }}</span>
                     {% else %}
                       <span class="badge badge-accent">{{ msg.status }}</span>
@@ -623,7 +632,8 @@
                     <button class="btn-dc btn-dc-sm btn-dc-success js-review-action" data-message-id="{{ msg.message_id }}" data-action="pardon" title="Pulihkan">Pulihkan</button>
                     <button class="btn-dc btn-dc-sm btn-dc-warning js-review-action" data-message-id="{{ msg.message_id }}" data-action="warn" title="Peringatan DM Bot">Peringatan</button>
                     <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="{{ msg.message_id }}" data-action="timeout_1h" title="Timeout 1 Jam (Mute Sementara)">Timeout (1 Jam)</button>
-                    <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="{{ msg.message_id }}" data-action="ban" title="Ban">Ban</button>
+                    <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="{{ msg.message_id }}" data-action="kick" title="Keluarkan dari server">Kick</button>
+                    <button class="btn-dc btn-dc-sm btn-dc-danger js-review-action" data-message-id="{{ msg.message_id }}" data-action="ban" title="Ban (pilih durasi)">Ban</button>
                     {% endif %}
                   </div>
                   <div class="text-[10px] text-slate-500 pt-1.5 border-t border-slate-100 flex items-center justify-between font-code">
@@ -676,7 +686,7 @@
               <select id="filter-status-select" class="dc-floating-input text-xs py-1.5">
                 <option value="all">Semua Status</option>
                 <option value="Menunggu Tinjauan">Menunggu Tinjauan</option>
-                <option value="Dipulihkan">Dipulihkan (Pardon)</option>
+                <option value="Pardon">Dipulihkan (Pardon)</option>
                 <option value="Sanksi Diberikan">Sanksi Diberikan</option>
               </select>
             </div>
@@ -720,7 +730,7 @@
                     <td>
                       {% if 'Pardon' in item.status or 'Dipulihkan' in item.status %}
                         <span class="badge badge-positive">{{ item.status }}</span>
-                      {% elif 'Ban' in item.status or 'Hapus' in item.status %}
+                      {% elif 'Ban' in item.status or 'Kick' in item.status or 'Timeout' in item.status or 'Hapus' in item.status %}
                         <span class="badge badge-negative">{{ item.status }}</span>
                       {% else %}
                         <span class="badge badge-warning">{{ item.status }}</span>
@@ -794,31 +804,6 @@
           </div>
         </div>
 
-        <!-- Section: Online Members -->
-        <div>
-          <div class="text-[10px] uppercase font-bold text-slate-500 mb-2 tracking-wider">
-            Online &mdash; 12
-          </div>
-          <div class="space-y-1 text-xs">
-            <div class="flex items-center space-x-2 py-1 text-slate-700">
-              <div class="w-2 h-2 rounded-full bg-[#23A55A]"></div>
-              <span>CyberWolf#7731</span>
-            </div>
-            <div class="flex items-center space-x-2 py-1 text-slate-700">
-              <div class="w-2 h-2 rounded-full bg-[#23A55A]"></div>
-              <span>ToxicAvenger#9012</span>
-            </div>
-            <div class="flex items-center space-x-2 py-1 text-slate-700">
-              <div class="w-2 h-2 rounded-full bg-[#F0B232]"></div>
-              <span>SniperKuy#1129</span>
-            </div>
-            <div class="flex items-center space-x-2 py-1 text-slate-700">
-              <div class="w-2 h-2 rounded-full bg-[#23A55A]"></div>
-              <span>ShadowGamer#3341</span>
-            </div>
-          </div>
-        </div>
-
         <!-- Section: 12-Taxonomy Progress Bars -->
         <div class="pt-3 border-t border-[var(--dc-border)]">
           <div class="text-[10px] uppercase font-bold text-slate-500 mb-2.5 tracking-wider">
@@ -845,6 +830,6 @@
   </main>
 
   <!-- Client Script with Cache Busting -->
-  <script src="/static/js/dashboard.js?v=20261101_academic_light_v3"></script>
+  <script src="/static/js/dashboard.js?v=20261101_academic_light_v5"></script>
 </body>
 </html>

@@ -10,25 +10,18 @@ from app.config import settings
 from app.database.db import record_user_violation, save_analysis_result
 
 
-def _resolve_clean_text(message: Message) -> str:
-    """Mengubah format mention mentah (<@123456789>) menjadi nama akun ramah dibaca (@username)."""
-    text = getattr(message, "clean_content", message.content) or message.content
-    if "<@" in text:
-        def replace_mention(match):
-            uid = match.group(1)
-            for m in getattr(message, "mentions", []):
-                if str(m.id) == uid:
-                    disp = getattr(m, "display_name", None) or getattr(m, "name", None)
-                    return f"@{disp}"
-            if getattr(message, "guild", None):
-                mem = message.guild.get_member(int(uid))
-                if mem:
-                    disp = getattr(mem, "display_name", None) or getattr(mem, "name", None)
-                    return f"@{disp}"
-            return match.group(0)
+def _display_name(user) -> str:
+    """Nama ramah-baca '@nama' dari Member/User (nick server > nama global > username)."""
+    name = getattr(user, "display_name", None) or getattr(user, "name", None) or str(user)
+    return name if name.startswith("@") else f"@{name}"
 
-        text = re.sub(r"<@!?([0-9]+)>", replace_mention, text)
-    return text
+
+def _resolve_victims(message: Message, result: dict) -> list[str]:
+    """Target dalam bentuk '@nama'. Mention asli diambil dari Discord; token angka tidak pernah ditampilkan."""
+    names = [_display_name(m) for m in message.mentions if m.id != message.author.id]
+    if not names:
+        names = [f"@{t}" for t in (str(v).strip("<@!>") for v in result.get("victim_mentions", [])) if t and not t.isdigit()]
+    return list(dict.fromkeys(names))
 
 
 async def _call_api_or_local(message: Message) -> dict:
@@ -110,6 +103,9 @@ async def _send_admin_alert_embed(
     result: dict,
     total_violations: int,
     user_kicked: bool,
+    author_name: str,
+    victim_names: list[str],
+    clean_text: str,
 ) -> None:
     """Mengirim tiket laporan Human-in-the-Loop ke channel admin."""
     if not message.guild:
@@ -133,25 +129,17 @@ async def _send_admin_alert_embed(
 
     embed.add_field(
         name="👤 Pelaku",
-        value=f"{message.author.mention}\n`{message.author}` (ID: `{message.author.id}`)",
+        value=f"{author_name}\n(ID: `{message.author.id}`)",
         inline=True,
     )
 
-    # Korban / Target (Sesuai Diagram Alur)
-    victims = result.get("victim_mentions", [])
-    if message.mentions:
-        victim_text = ", ".join([m.mention for m in message.mentions if m.id != message.author.id])
-    elif victims:
-        victim_text = ", ".join([f"<@{v}>" if v.isdigit() else f"@{v}" for v in victims])
-    else:
-        victim_text = "*Tidak ada mention spesifik (Publik)*"
+    victim_text = ", ".join(victim_names) if victim_names else "*Tidak ada mention spesifik (Publik)*"
 
     embed.add_field(name="🎯 Target / Korban", value=victim_text, inline=True)
     embed.add_field(name="📍 Channel", value=message.channel.mention, inline=True)
 
     # Pesan Asli vs Teks yang Dinormalisasi
-    clean_original_text = _resolve_clean_text(message)
-    embed.add_field(name="💬 Pesan Asli (Sebelum Dihapus)", value=f"```{clean_original_text}```", inline=False)
+    embed.add_field(name="💬 Pesan Asli (Sebelum Dihapus)", value=f"```{clean_text}```", inline=False)
     embed.add_field(name="🧹 Teks AI (Normalized)", value=f"`{result.get('cleaned_text', '-')}`", inline=False)
 
     # Label & Probabilitas
@@ -205,6 +193,11 @@ async def handle_incoming_message(message: Message) -> None:
     user_kicked = False
     total_violations = 0
 
+    # Resolusi nama sekali saja: dipakai embed admin, database, dan dashboard
+    author_name = _display_name(message.author)
+    victim_names = _resolve_victims(message, result)
+    clean_text = message.clean_content
+
     # 2. Jika Terindikasi Pelanggaran -> Eksekusi Paralel (Sesuai Diagram)
     if is_violation:
         # Aksi 1: Hapus Pesan Real-Time di Channel (< 1 Detik)
@@ -213,7 +206,7 @@ async def handle_incoming_message(message: Message) -> None:
         # Catat 1 kali pelanggaran ke database (Bukan sistem poin, tapi jumlah pelanggaran murni)
         total_violations = record_user_violation(
             user_id=str(message.author.id),
-            user_name=str(message.author),
+            user_name=author_name,
         )
 
         # Kirim Peringatan Ringan di Channel
@@ -255,6 +248,9 @@ async def handle_incoming_message(message: Message) -> None:
             result=result,
             total_violations=total_violations,
             user_kicked=user_kicked,
+            author_name=author_name,
+            victim_names=victim_names,
+            clean_text=clean_text,
         )
 
     # 3. Simpan Riwayat ke Database SQLite (Audit Trail)
@@ -262,40 +258,12 @@ async def handle_incoming_message(message: Message) -> None:
     confidence = max(probs.values()) if probs else 0.0
     active_labels_str = ", ".join(result.get("active_labels", []))
 
-    # Ekstraksi nama korban / target (resolusi Member / Mention menjadi @nama_user)
-    victim_names_list: list[str] = []
-    if message.mentions:
-        for m in message.mentions:
-            if m.id != message.author.id:
-                disp = getattr(m, "display_name", None) or getattr(m, "name", None) or str(m)
-                victim_names_list.append(f"@{disp}")
-
-    # Fallback jika message.mentions kosong tapi ada victim_mentions dari NLP engine
-    if not victim_names_list and result.get("victim_mentions"):
-        for v in result.get("victim_mentions", []):
-            if v.isdigit() and message.guild:
-                member = message.guild.get_member(int(v))
-                if member:
-                    disp = getattr(member, "display_name", None) or getattr(member, "name", None) or str(member)
-                    victim_names_list.append(f"@{disp}")
-                else:
-                    victim_names_list.append(f"@{v}")
-            else:
-                victim_names_list.append(f"@{v}" if not v.startswith("@") else v)
-
-    victims_str = ", ".join(victim_names_list)
-
-    # Bersihkan mention mentah di pesan dan nama author untuk dashboard & database
-    clean_msg_content = _resolve_clean_text(message)
-    author_disp = getattr(message.author, "display_name", None) or getattr(message.author, "name", None) or str(message.author)
-    author_name_str = f"@{author_disp}" if not author_disp.startswith("@") else author_disp
-
     save_analysis_result(
-        raw_content=clean_msg_content,
+        raw_content=clean_text,
         normalized_content=result.get("cleaned_text", ""),
         label=result.get("violation_category", "Aman"),
         user_id=str(message.author.id),
-        user_name=author_name_str,
+        user_name=author_name,
         channel_id=str(message.channel.id),
         channel_name=getattr(message.channel, "name", ""),
         guild_id=str(message.guild.id) if message.guild else "",
@@ -308,6 +276,6 @@ async def handle_incoming_message(message: Message) -> None:
         active_labels=active_labels_str,
         severity=result.get("severity", "NORMAL"),
         latency_ms=result.get("latency_ms", 0.0),
-        victim_names=victims_str,
+        victim_names=", ".join(victim_names),
         confidence_score=confidence,
     )
