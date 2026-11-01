@@ -145,20 +145,26 @@ class IndoBERTModerationEngine:
         return default_thresh
 
     def _load_model(self) -> AutoModelForSequenceClassification:
-        model = AutoModelForSequenceClassification.from_pretrained(
-            MODEL_NAME,
-            num_labels=len(LABEL_COLUMNS),
-            problem_type="multi_label_classification",
-        ).to(self.device)
-
-        # Cek path utama atau nama alternatif (best_model_indobert.pt vs best_model_indobert_optimized.pt)
-        target_path = self.model_path
-        if not target_path or not target_path.exists():
-            alt_path = settings.model_dir / "best_model_indobert.pt"
-            if alt_path.exists():
-                target_path = alt_path
+        # Cek path utama atau nama alternatif (termasuk jika file berada di root repo)
+        candidate_paths = [
+            self.model_path,
+            settings.model_dir / "best_model_indobert.pt",
+            settings.model_dir / "best_model_indobert_optimized.pt",
+            settings.model_dir / "best_model_indobert .pt",
+            settings.base_dir / "best_model_indobert .pt",
+            settings.base_dir / "best_model_indobert.pt",
+            settings.base_dir / "best_model_indobert_optimized.pt",
+        ]
+        target_path = next((p for p in candidate_paths if p and p.exists()), None)
 
         if target_path and target_path.exists():
+            from transformers import AutoConfig
+            config = AutoConfig.from_pretrained(
+                MODEL_NAME,
+                num_labels=len(LABEL_COLUMNS),
+                problem_type="multi_label_classification",
+            )
+            model = AutoModelForSequenceClassification.from_config(config).to(self.device)
             try:
                 state_dict = torch.load(target_path, map_location=self.device)
                 model.load_state_dict(state_dict)
@@ -166,6 +172,11 @@ class IndoBERTModerationEngine:
             except Exception as e:
                 print(f"[Warning] Gagal memuat bobot model dari {target_path}: {e}")
         else:
+            model = AutoModelForSequenceClassification.from_pretrained(
+                MODEL_NAME,
+                num_labels=len(LABEL_COLUMNS),
+                problem_type="multi_label_classification",
+            ).to(self.device)
             print(f"[Info] Model weights tidak ditemukan di {self.model_path}. Model berjalan dengan bobot pretrained default.")
 
         return model
