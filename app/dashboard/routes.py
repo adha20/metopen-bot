@@ -129,9 +129,17 @@ def create_dashboard_app() -> Flask:
             return jsonify({"error": "Teks kalimat tidak boleh kosong"}), 400
         labels = payload.get("labels", {})
         source_id = payload.get("source_log_id")
-        row_id = save_dataset_contribution(text, labels, source_id)
+        if isinstance(source_id, str):
+            digits = "".join(ch for ch in source_id if ch.isdigit())
+            source_id = int(digits) if digits else None
+
+        try:
+            row_id = save_dataset_contribution(text, labels, source_id)
+        except ValueError as err:
+            return jsonify({"error": str(err), "already_added": True}), 409
+
         total = count_dataset_contributions()
-        return jsonify({"success": True, "id": row_id, "total": total})
+        return jsonify({"success": True, "id": row_id, "total": total, "source_log_id": source_id})
 
     @app.route("/api/dataset/export", methods=["GET"])
     def api_dataset_export():

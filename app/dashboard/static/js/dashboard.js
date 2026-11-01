@@ -321,7 +321,11 @@ async function reloadAuditLogs() {
           ? "badge-negative"
           : "badge-warning";
 
-        return `
+            const datasetBtnHtml = item.in_dataset
+              ? `<button class="btn-dc btn-dc-sm btn-dc-secondary opacity-60 cursor-not-allowed" disabled title="Pesan ini sudah ditambahkan ke dataset">✓ Di Dataset</button>`
+              : `<button class="btn-dc btn-dc-sm btn-dc-primary js-open-dataset-modal" data-message-id="${item.message_id}" data-content="${escapeHtml(item.content)}" data-labels='${JSON.stringify(item.labels || {})}' title="Tambah ke Dataset">+ Dataset</button>`;
+
+            return `
           <tr id="audit-row-${item.message_id}">
             <td>
               <div class="font-bold text-slate-900">${escapeHtml(item.author)}</div>
@@ -340,9 +344,7 @@ async function reloadAuditLogs() {
             </td>
             <td class="text-center">
               <div class="flex items-center justify-center space-x-1.5">
-                <button class="btn-dc btn-dc-sm btn-dc-primary js-open-dataset-modal" data-message-id="${item.message_id}" data-content="${escapeHtml(item.content)}" data-labels='${JSON.stringify(item.labels || {})}' title="Tambah ke Dataset">
-                  + Dataset
-                </button>
+                ${datasetBtnHtml}
                 <button class="btn-dc btn-dc-sm btn-dc-secondary js-open-detail-modal" data-message-id="${item.message_id}" title="Edit">
                   Edit
                 </button>
@@ -410,9 +412,13 @@ async function reloadUsersSummary() {
               statusBadge = `<span class="badge badge-accent">${escapeHtml(msg.status)}</span>`;
             }
 
+            const datasetBtnHtml = msg.in_dataset
+              ? `<button class="btn-dc btn-dc-sm btn-dc-secondary opacity-60 cursor-not-allowed" disabled title="Pesan ini sudah ditambahkan ke dataset">✓ Di Dataset</button>`
+              : `<button class="btn-dc btn-dc-sm btn-dc-primary js-open-dataset-modal" data-message-id="${msg.message_id}" data-content="${escapeHtml(msg.content)}" data-labels='${JSON.stringify(msg.labels || {})}' title="Tambah ke Dataset">+ Dataset</button>`;
+
             const actionButtonsHtml = `
               <div class="flex items-center justify-end pt-1.5 border-t border-[var(--dc-border)] gap-1">
-                <button class="btn-dc btn-dc-sm btn-dc-primary js-open-dataset-modal" data-message-id="${msg.message_id}" data-content="${escapeHtml(msg.content)}" data-labels='${JSON.stringify(msg.labels || {})}' title="Tambah ke Dataset">+ Dataset</button>
+                ${datasetBtnHtml}
                 ${reviewButtonsHtml}
               </div>
             `;
@@ -751,6 +757,19 @@ function initDatasetModal() {
 
         if (!res.ok) {
           const err = await res.json();
+          if (res.status === 409) {
+            showNotice(err.error || "Pesan ini sudah pernah ditambahkan ke dataset.", "danger");
+            const curMsgId = msgIdInput ? msgIdInput.value : "";
+            if (curMsgId) {
+              document.querySelectorAll(`.js-open-dataset-modal[data-message-id="${curMsgId}"]`).forEach((btn) => {
+                const isSm = btn.classList.contains("btn-dc-sm");
+                btn.outerHTML = `<button class="btn-dc ${isSm ? "btn-dc-sm" : ""} btn-dc-secondary opacity-60 cursor-not-allowed" disabled title="Pesan ini sudah ditambahkan ke dataset">✓ Di Dataset</button>`;
+              });
+            }
+            const modal = document.getElementById("modal-add-dataset");
+            if (modal) modal.classList.add("hidden");
+            return;
+          }
           alert(`Gagal menyimpan ke dataset: ${err.error || "Kesalahan server"}`);
           return;
         }
@@ -759,6 +778,15 @@ function initDatasetModal() {
         const badge = document.getElementById("badge-dataset-count");
         if (badge && data.total !== undefined) {
           badge.textContent = data.total;
+        }
+
+        // Tandai tombol sebagai sudah ditambahkan (✓ Di Dataset) di seluruh tab
+        const curMsgId = msgIdInput ? msgIdInput.value : "";
+        if (curMsgId) {
+          document.querySelectorAll(`.js-open-dataset-modal[data-message-id="${curMsgId}"]`).forEach((btn) => {
+            const isSm = btn.classList.contains("btn-dc-sm");
+            btn.outerHTML = `<button class="btn-dc ${isSm ? "btn-dc-sm" : ""} btn-dc-secondary opacity-60 cursor-not-allowed" disabled title="Pesan ini sudah ditambahkan ke dataset">✓ Di Dataset</button>`;
+          });
         }
 
         showNotice(`Kalimat berhasil disimpan ke dataset (Total: ${data.total})!`, "success");

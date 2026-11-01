@@ -413,7 +413,20 @@ def fetch_counts() -> dict[str, int]:
     }
 
 
-def _row_to_message_dict(row: sqlite3.Row) -> dict[str, Any]:
+def _get_contributed_identifiers(conn: sqlite3.Connection) -> tuple[set[int], set[str]]:
+    try:
+        rows = conn.execute("SELECT source_log_id, tweet FROM dataset_contributions").fetchall()
+        source_ids = {int(r["source_log_id"]) for r in rows if r["source_log_id"] is not None}
+        tweets = {r["tweet"].strip() for r in rows if r["tweet"]}
+        return source_ids, tweets
+    except Exception:
+        return set(), set()
+
+
+def _row_to_message_dict(
+    row: sqlite3.Row,
+    contributed: tuple[set[int], set[str]] | None = None,
+) -> dict[str, Any]:
     active_labels_list = [l.strip() for l in (row["active_labels"] or "").split(",") if l.strip()]
     lbl = row["label"] or ""
     labels_map = {
@@ -439,6 +452,12 @@ def _row_to_message_dict(row: sqlite3.Row) -> dict[str, Any]:
     pts_added = row["violation_points_added"] if "violation_points_added" in row.keys() else 0
     pts_total = row["total_violation_points"] if "total_violation_points" in row.keys() else 0
 
+    in_dataset = False
+    if contributed:
+        source_ids, tweets = contributed
+        raw_text = (row["raw_content"] or "").strip()
+        in_dataset = (row["id"] in source_ids) or (raw_text in tweets)
+
     return {
         "message_id": f"msg_{row['id']}",
         "id": row["id"],
@@ -457,11 +476,13 @@ def _row_to_message_dict(row: sqlite3.Row) -> dict[str, Any]:
         "violation_points": f"Poin Bertambah: +{pts_added} | Total: {pts_total}/3",
         "labels": labels_map,
         "admin_notes": row["admin_notes"] or "",
+        "in_dataset": in_dataset,
     }
 
 
 def fetch_flagged_queue() -> list[dict[str, Any]]:
     with get_connection() as conn:
+        contributed = _get_contributed_identifiers(conn)
         rows = conn.execute(
             """
             SELECT * FROM analysis_logs
@@ -469,7 +490,7 @@ def fetch_flagged_queue() -> list[dict[str, Any]]:
             ORDER BY id DESC
             """
         ).fetchall()
-        return [_row_to_message_dict(r) for r in rows]
+        return [_row_to_message_dict(r, contributed) for r in rows]
 
 
 def fetch_audit_logs(
@@ -478,6 +499,7 @@ def fetch_audit_logs(
     status_filter: str | None = None,
 ) -> list[dict[str, Any]]:
     with get_connection() as conn:
+        contributed = _get_contributed_identifiers(conn)
         query = "SELECT * FROM analysis_logs WHERE 1=1"
         params: list[Any] = []
         if search:
@@ -492,13 +514,14 @@ def fetch_audit_logs(
             params.append(f"%{status_filter}%")
         query += " ORDER BY id DESC"
         rows = conn.execute(query, params).fetchall()
-        return [_row_to_message_dict(r) for r in rows]
+        return [_row_to_message_dict(r, contributed) for r in rows]
 
 
 def fetch_log_by_id(log_id: int) -> dict[str, Any] | None:
     with get_connection() as conn:
+        contributed = _get_contributed_identifiers(conn)
         row = conn.execute("SELECT * FROM analysis_logs WHERE id = ?", (log_id,)).fetchone()
-        return _row_to_message_dict(row) if row else None
+        return _row_to_message_dict(row, contributed) if row else None
 
 
 def update_analysis_log(
@@ -681,7 +704,23 @@ def save_dataset_contribution(
     labels: dict[str, Any],
     source_log_id: int | None = None,
 ) -> int:
+    clean_tweet = tweet.strip()
     with get_connection() as conn:
+        # Validasi duplikasi: cegah penambahan jika log id atau isi tweet yang sama sudah ada
+        if source_log_id is not None:
+            existing = conn.execute(
+                "SELECT id FROM dataset_contributions WHERE source_log_id = ? OR tweet = ? LIMIT 1",
+                (source_log_id, clean_tweet),
+            ).fetchone()
+        else:
+            existing = conn.execute(
+                "SELECT id FROM dataset_contributions WHERE tweet = ? LIMIT 1",
+                (clean_tweet,),
+            ).fetchone()
+
+        if existing:
+            raise ValueError("Pesan ini sudah pernah ditambahkan ke dataset.")
+
         cursor = conn.execute(
             """
             INSERT INTO dataset_contributions (
@@ -691,7 +730,7 @@ def save_dataset_contribution(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                tweet.strip(),
+                clean_tweet,
                 1 if labels.get("HS") else 0,
                 1 if labels.get("Abusive") else 0,
                 1 if labels.get("HS_Individual") else 0,

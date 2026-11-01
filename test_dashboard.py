@@ -67,6 +67,9 @@ def run_tests() -> None:
 
     # 6. Uji Fitur Kontribusi Dataset & Ekspor CSV 13-Kolom
     print("[6/6] Menguji API Tambah ke Dataset & Ekspor CSV 13-Kolom...")
+    with get_connection() as conn:
+        conn.execute("DELETE FROM dataset_contributions WHERE tweet IN ('oi babi', 'halo selamat pagi kawan-kawan semuanya')")
+        conn.commit()
     resp_add1 = client.post(
         "/api/dataset/add",
         json={
@@ -101,9 +104,22 @@ def run_tests() -> None:
     expected_header = "Tweet,HS,Abusive,HS_Individual,HS_Group,HS_Religion,HS_Race,HS_Physical,HS_Gender,HS_Other,HS_Weak,HS_Moderate,HS_Strong"
     assert lines[0] == expected_header, f"Header CSV tidak sesuai! Didapat: {lines[0]}"
     assert len(lines) >= 3, f"Jumlah baris CSV tidak sesuai: {len(lines)}"
-    assert "oi babi,1,1,1,0,0,0,0,0,0,0,0,1" in lines[1]
-    assert "halo selamat pagi kawan-kawan semuanya,0,0,0,0,0,0,0,0,0,0,0,0" in lines[2]
+    assert any("oi babi,1,1,1,0,0,0,0,0,0,0,0,1" in line for line in lines)
+    assert any("halo selamat pagi kawan-kawan semuanya,0,0,0,0,0,0,0,0,0,0,0,0" in line for line in lines)
     print("      ✅ CSV Header & Kolom cocok 100% dengan format re_dataset.csv (13 kolom).")
+
+    # 6d. Uji Pencegahan Duplikasi (Cegah tambah berulang)
+    resp_dup = client.post(
+        "/api/dataset/add",
+        json={
+            "text": "oi babi",
+            "labels": {"HS": 1},
+            "source_log_id": 1,
+        },
+    )
+    assert resp_dup.status_code == 409, f"Duplikasi tidak dicegah! Status: {resp_dup.status_code}"
+    assert resp_dup.get_json().get("already_added") is True
+    print("      ✅ Pencegahan duplikasi berhasil (HTTP 409: pesan yang sudah ada ditolak).")
 
     print("=" * 60)
     print("🎉 SEMUA PENGUJIAN SELESAI & BERHASIL 100%!")
