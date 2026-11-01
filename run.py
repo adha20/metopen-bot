@@ -114,9 +114,10 @@ def main() -> None:
         run_bot()
     else:
         print("\n💡 Tips: Tambahkan DISCORD_BOT_TOKEN di .env untuk menyalakan bot Discord.")
-        print("    Tekan Ctrl+C untuk menghentikan server API & Dashboard.\n")
+        print("    Server aktif (Dashboard & API berjalan). Tekan Ctrl+C untuk menghentikan server.\n")
         try:
-            api_thread.join()
+            while dash_thread.is_alive():
+                dash_thread.join(timeout=1.0)
         except KeyboardInterrupt:
             print("\n🛑 Sistem dihentikan oleh pengguna.")
 
