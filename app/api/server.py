@@ -5,9 +5,11 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.schemas import HealthResponse, PredictionRequest, PredictionResponse
-from app.config import settings
+from app.dashboard.routes import DASHBOARD_DIR, router as dashboard_router
+from app.database.db import init_db
 from app.engine.indobert_engine import IndoBERTModerationEngine
 
 engine: IndoBERTModerationEngine | None = None
@@ -17,6 +19,7 @@ engine: IndoBERTModerationEngine | None = None
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Menginisialisasi Model IndoBERT sekali saat server startup."""
     global engine
+    init_db()
     print("[API] Memulai AI Inference Server...")
     try:
         engine = IndoBERTModerationEngine.get_instance()
@@ -44,15 +47,6 @@ app.add_middleware(
 )
 
 
-@app.get("/", tags=["Info"])
-async def root() -> dict[str, str]:
-    return {
-        "service": "IndoBERT Cyberbullying Detection API",
-        "status": "online",
-        "docs_url": "/docs",
-    }
-
-
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health_check() -> HealthResponse:
     global engine
@@ -78,3 +72,7 @@ async def predict_moderation(payload: PredictionRequest) -> PredictionResponse:
     result = engine.predict(payload.text)
     return PredictionResponse(**result.to_dict())
 
+
+# Web Dashboard Human-in-the-Loop: halaman "/" + API "/api/..." + file statis
+app.include_router(dashboard_router)
+app.mount("/static", StaticFiles(directory=DASHBOARD_DIR / "static"), name="static")

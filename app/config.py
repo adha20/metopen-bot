@@ -56,12 +56,9 @@ class Settings:
         os.getenv("DISCORD_ADMIN_LOG_CHANNEL_ID")
     )
 
-    # Dashboard & Database Settings
-    flask_host: str = os.getenv("FLASK_HOST", "0.0.0.0")
-    flask_port: int = int(os.getenv("FLASK_PORT", "5000"))
+    # Database & Policy Settings
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "app.db")
     run_mode: str = os.getenv("RUN_MODE", "all").lower().strip()
-    dashboard_debug: bool = os.getenv("DASHBOARD_DEBUG", "true").lower() == "true"
     warning_delete_after_seconds: int = int(os.getenv("WARNING_DELETE_AFTER_SECONDS", "10"))
     kick_violation_threshold: int = int(
         os.getenv("KICK_VIOLATION_THRESHOLD", os.getenv("KICK_STRIKE_THRESHOLD", "3"))

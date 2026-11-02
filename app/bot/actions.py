@@ -144,7 +144,7 @@ async def _perform(
 
 
 def _run_on_bot(make_coro):
-    """Dipanggil dari thread Flask: jalankan coroutine di event loop bot yang sedang hidup."""
+    """Dipanggil dari thread FastAPI: jalankan coroutine di event loop bot yang sedang hidup."""
     from app.bot.discord_bot import bot
 
     if not bot.is_ready():

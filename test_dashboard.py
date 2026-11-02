@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Skrip Pengujian Mandiri Otomatis untuk Web Dashboard & Database metopen-bot."""
+"""Skrip Pengujian Mandiri Otomatis untuk Web Dashboard & Database metopen-bot.
+
+PERINGATAN: memakai database dari DATABASE_PATH (default app.db) dan benar-benar mengubah datanya.
+Jalankan pada salinan:  cp app.db /tmp/test.db && DATABASE_PATH=/tmp/test.db python test_dashboard.py
+"""
 
 from __future__ import annotations
 
-import sys
-from app.dashboard.routes import create_dashboard_app
-from app.database.db import get_connection
+from fastapi.testclient import TestClient
+
+from app.api.server import app
+from app.database.db import get_connection, init_db
 
 
 def run_tests() -> None:
@@ -13,35 +18,35 @@ def run_tests() -> None:
     print("🧪 MEMULAI PENGUJIAN WEB DASHBOARD & DATABASE METOPEN-BOT")
     print("=" * 60)
 
-    # 1. Inisialisasi Aplikasi Flask
-    print("[1/5] Menginisialisasi Flask App & Database SQLite...")
-    app = create_dashboard_app()
-    client = app.test_client()
+    # 1. Inisialisasi Aplikasi FastAPI
+    print("[1/5] Menginisialisasi FastAPI App & Database SQLite...")
+    init_db()
+    client = TestClient(app)  # tanpa `with` agar model IndoBERT tidak ikut dimuat
     print("      ✅ Berhasil membuat aplikasi dashboard.")
 
     # 2. Uji Halaman Utama (HTML Rendering)
     print("[2/5] Menguji halaman utama (GET /)...")
     resp_index = client.get("/")
     assert resp_index.status_code == 200, f"Gagal memuat halaman utama: {resp_index.status_code}"
-    assert b"Dashboard Admin" in resp_index.data, "Judul Dashboard Admin tidak ditemukan di HTML"
-    assert b"Daftar Menu" in resp_index.data, "Kategori Daftar Menu tidak ditemukan di HTML"
-    print(f"      ✅ Berhasil memuat HTML ({len(resp_index.data):,} bytes rendered).")
+    assert b"Dashboard Admin" in resp_index.content, "Judul Dashboard Admin tidak ditemukan di HTML"
+    assert b"Daftar Menu" in resp_index.content, "Kategori Daftar Menu tidak ditemukan di HTML"
+    print(f"      ✅ Berhasil memuat HTML ({len(resp_index.content):,} bytes rendered).")
 
     # 3. Uji Endpoint REST API
     print("[3/5] Menguji endpoint statistik & antrean (REST API)...")
     resp_stats = client.get("/api/stats")
     assert resp_stats.status_code == 200, f"Gagal /api/stats: {resp_stats.status_code}"
-    stats_data = resp_stats.get_json()
+    stats_data = resp_stats.json()
     print(f"      ✅ /api/stats -> total pesan: {stats_data.get('total_messages_today')}, ditinjau: {stats_data.get('flagged_count')}")
 
     resp_queue = client.get("/api/flagged-queue")
     assert resp_queue.status_code == 200, f"Gagal /api/flagged-queue: {resp_queue.status_code}"
-    queue_data = resp_queue.get_json()
+    queue_data = resp_queue.json()
     print(f"      ✅ /api/flagged-queue -> {len(queue_data)} pesan menunggu moderasi.")
 
     resp_users = client.get("/api/users-summary")
     assert resp_users.status_code == 200, f"Gagal /api/users-summary: {resp_users.status_code}"
-    users_data = resp_users.get_json()
+    users_data = resp_users.json()
     print(f"      ✅ /api/users-summary -> {len(users_data)} pengguna terdata.")
 
     # 4. Uji Aksi Moderasi Human-in-the-Loop (Review Action)
@@ -53,7 +58,7 @@ def run_tests() -> None:
             json={"message_id": test_msg_id, "action": "pardon", "notes": "Uji coba persetujuan otomatis oleh admin"},
         )
         assert resp_act.status_code == 200, f"Gagal review action: {resp_act.status_code}"
-        updated_log = resp_act.get_json()
+        updated_log = resp_act.json()
         print(f"      ✅ Berhasil mengubah status {test_msg_id} -> '{updated_log.get('status')}'.")
 
     # 5. Uji Integritas File Database SQLite & WAL Mode
@@ -79,7 +84,7 @@ def run_tests() -> None:
         },
     )
     assert resp_add1.status_code == 200, f"Gagal /api/dataset/add: {resp_add1.status_code}"
-    data_add1 = resp_add1.get_json()
+    data_add1 = resp_add1.json()
     assert data_add1.get("success") is True
     print(f"      ✅ Berhasil tambah entri toksik -> id: {data_add1.get('id')}, total: {data_add1.get('total')}")
 
@@ -92,14 +97,14 @@ def run_tests() -> None:
         },
     )
     assert resp_add2.status_code == 200, f"Gagal /api/dataset/add false positive: {resp_add2.status_code}"
-    data_add2 = resp_add2.get_json()
+    data_add2 = resp_add2.json()
     assert data_add2.get("total") == data_add1.get("total") + 1
     print(f"      ✅ Berhasil tambah entri false positive -> total: {data_add2.get('total')}")
 
     resp_export = client.get("/api/dataset/export")
     assert resp_export.status_code == 200
     assert "attachment; filename=re_dataset_contributions.csv" in resp_export.headers.get("Content-Disposition", "")
-    csv_text = resp_export.data.decode("utf-8")
+    csv_text = resp_export.text
     lines = csv_text.strip().split("\n")
     expected_header = "Tweet,HS,Abusive,HS_Individual,HS_Group,HS_Religion,HS_Race,HS_Physical,HS_Gender,HS_Other,HS_Weak,HS_Moderate,HS_Strong"
     assert lines[0] == expected_header, f"Header CSV tidak sesuai! Didapat: {lines[0]}"
@@ -118,7 +123,7 @@ def run_tests() -> None:
         },
     )
     assert resp_dup.status_code == 409, f"Duplikasi tidak dicegah! Status: {resp_dup.status_code}"
-    assert resp_dup.get_json().get("already_added") is True
+    assert resp_dup.json().get("already_added") is True
     print("      ✅ Pencegahan duplikasi berhasil (HTTP 409: pesan yang sudah ada ditolak).")
 
     print("=" * 60)

@@ -1,10 +1,11 @@
 discord.py>=2.4.0
-Flask>=3.0.0
+jinja2>=3.1.0
 python-dotenv>=1.0.1
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
 pydantic>=2.0.0
 aiohttp>=3.9.0
+httpx>=0.27.0  # dibutuhkan fastapi.testclient (test_dashboard.py)
 torch>=2.0.0
 transformers>=4.35.0
 pandas>=2.0.0

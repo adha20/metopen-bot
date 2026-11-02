@@ -1,6 +1,6 @@
 # IndoBERT Multi-Label Cyberbullying & Hate Speech Detector (Discord Human-in-the-Loop)
 
-Sistem moderasi teks otomatis *real-time* berbasis Deep Learning **IndoBERT Multi-Label** yang terintegrasi dengan **Discord Bot**, **FastAPI Microservice**, dan **Flask Web Dashboard (Human-in-the-Loop)**.
+Sistem moderasi teks otomatis *real-time* berbasis Deep Learning **IndoBERT Multi-Label** yang terintegrasi dengan **Discord Bot**, **FastAPI** (API inferensi + Web Dashboard Human-in-the-Loop dalam satu server).
 
 Proyek ini dibangun untuk mendeteksi ujaran kebencian (*hate speech*) dan ujaran kasar (*abusive language*) dalam bahasa Indonesia ke dalam **12 kategori label spesifik**, sekaligus menyaring dan menghapus pesan dalam hitungan milidetik (< 300 ms) sebelum dibaca korban.
 
@@ -13,18 +13,16 @@ Proyek ini dibangun untuk mendeteksi ujaran kebencian (*hate speech*) dan ujaran
        ↕ (WebSocket)
 [ Discord Bot Client ] ---> (1) Auto-Delete Pesan Melanggar (< 1s)
        ↕ (HTTP async)        (2) Kirim Alert Embed ke #admin-log
-[ FastAPI Microservice (:8000) ]
+[ FastAPI (:8000): /predict + Web Dashboard ]
        ↕
 [ IndoBERT Engine + Dynamic Thresholds ]
        ↕
-[ SQLite Database (app.db) ]
-       ↕
-[ Flask Web Dashboard (:5000) ] ---> [ Admin Manusia (Human-in-the-Loop) ]
+[ SQLite Database (app.db) ] <--- [ Web Dashboard (/) ] <--- [ Admin Manusia (Human-in-the-Loop) ]
 ```
 
 1. **Messaging Tier (Discord Bot):** Menyadap chat, mengekstrak mention korban (`@Adit` -> `[USER]`), menghapus pesan melanggar secara instan, dan menerbitkan tiket insiden ke channel `#admin-log`.
 2. **AI Inference Microservice (FastAPI):** Menyajikan endpoint REST API `/predict` dengan latensi rendah (~200 ms) dan dokumentasi interaktif Swagger UI (`/docs`).
-3. **Audit & Review Tier (Flask & SQLite):** Mencatat seluruh riwayat pesan, kategori pelanggaran, rekam jejak pelaku, dan menyediakan dashboard pemantauan untuk admin manusia.
+3. **Audit & Review Tier (Dashboard FastAPI & SQLite):** Mencatat seluruh riwayat pesan, kategori pelanggaran, rekam jejak pelaku, dan menyediakan dashboard pemantauan untuk admin manusia.
 
 ---
 
@@ -55,7 +53,7 @@ cyberbully-discord-detector/
 │   ├── bot/                      # Discord Bot Gateway & Message Handler
 │   │   ├── discord_bot.py
 │   │   └── message_handler.py
-│   ├── dashboard/                # Web Dashboard Flask
+│   ├── dashboard/                # Web Dashboard (FastAPI + Jinja2)
 │   │   ├── routes.py
 │   │   └── templates/
 │   ├── database/                 # SQLite ORM & Query Audit
@@ -112,8 +110,6 @@ DISCORD_ADMIN_LOG_CHANNEL_ID=id_channel_khusus_admin_log
 API_HOST=127.0.0.1
 API_PORT=8000
 API_URL=http://127.0.0.1:8000
-FLASK_HOST=127.0.0.1
-FLASK_PORT=5000
 RUN_MODE=all
 KICK_VIOLATION_THRESHOLD=3
 ```
@@ -135,7 +131,7 @@ python run.py --mode all
 ```
 
 * **Swagger UI / API Docs:** Buka browser di [http://localhost:8000/docs](http://localhost:8000/docs)
-* **Web Dashboard Admin:** Buka browser di [http://localhost:5000](http://localhost:5000)
+* **Web Dashboard Admin:** Buka browser di [http://localhost:8000](http://localhost:8000)
 * **Bot Discord:** Otomatis online di server Discord Anda.
 
 ---
@@ -143,13 +139,9 @@ python run.py --mode all
 ## 🛠️ Opsi Mode Menjalankan Layanan Secara Terpisah
 
 Jika Anda ingin menjalankan layanan secara independen:
-* **Hanya AI API (FastAPI):**
+* **Hanya API + Dashboard (tanpa bot):**
   ```bash
   python run.py --mode api
-  ```
-* **Hanya Web Dashboard:**
-  ```bash
-  python run.py --mode dashboard
   ```
 * **Hanya Bot Discord:**
   ```bash
