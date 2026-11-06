@@ -126,6 +126,20 @@ def run_tests() -> None:
     assert resp_dup.json().get("already_added") is True
     print("      ✅ Pencegahan duplikasi berhasil (HTTP 409: pesan yang sudah ada ditolak).")
 
+    # 6e. Uji Tampilan Dataset & Hapus Entri Dataset
+    print("[6e] Menguji API Tampilan Dataset (GET /api/dataset/list) & Hapus...")
+    resp_list = client.get("/api/dataset/list")
+    assert resp_list.status_code == 200, f"Gagal /api/dataset/list: {resp_list.status_code}"
+    items = resp_list.json()
+    assert len(items) >= 2, f"Jumlah data dataset kurang: {len(items)}"
+    assert any(it["tweet"] == "oi babi" for it in items), "Entri 'oi babi' tidak ditemukan di dataset list"
+    print(f"      ✅ Berhasil memuat {len(items)} entri di view tampilan dataset.")
+
+    test_del_id = data_add1.get("id")
+    resp_del = client.delete(f"/api/dataset/{test_del_id}")
+    assert resp_del.status_code == 200, f"Gagal delete dataset: {resp_del.status_code}"
+    print(f"      ✅ Berhasil menghapus entri dataset #{test_del_id}.")
+
     print("=" * 60)
     print("🎉 SEMUA PENGUJIAN SELESAI & BERHASIL 100%!")
     print("=" * 60)

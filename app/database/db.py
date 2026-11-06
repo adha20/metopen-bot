@@ -740,3 +740,65 @@ def export_dataset_contributions_csv() -> str:
     return output.getvalue()
 
 
+def fetch_dataset_contributions(limit: int = 500, search: str | None = None) -> list[dict[str, Any]]:
+    """Mengambil daftar kontribusi dataset dengan label aktif dan informasi metadata."""
+    query = """
+        SELECT id, tweet, hs, abusive, hs_individual, hs_group,
+               hs_religion, hs_race, hs_physical, hs_gender,
+               hs_other, hs_weak, hs_moderate, hs_strong,
+               source_log_id, created_at
+        FROM dataset_contributions
+    """
+    params: list[Any] = []
+    if search and search.strip():
+        query += " WHERE tweet LIKE ?"
+        params.append(f"%{search.strip()}%")
+    query += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+
+    label_cols = [
+        ("hs", "HS"),
+        ("abusive", "Abusive"),
+        ("hs_individual", "HS_Individual"),
+        ("hs_group", "HS_Group"),
+        ("hs_religion", "HS_Religion"),
+        ("hs_race", "HS_Race"),
+        ("hs_physical", "HS_Physical"),
+        ("hs_gender", "HS_Gender"),
+        ("hs_other", "HS_Other"),
+        ("hs_weak", "HS_Weak"),
+        ("hs_moderate", "HS_Moderate"),
+        ("hs_strong", "HS_Strong"),
+    ]
+
+    with get_connection() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+        items = []
+        for r in rows:
+            active_labels = []
+            labels_map = {}
+            for col_name, label_name in label_cols:
+                is_active = bool(r[col_name])
+                labels_map[label_name] = 1 if is_active else 0
+                if is_active:
+                    active_labels.append(label_name)
+            items.append({
+                "id": r["id"],
+                "tweet": r["tweet"],
+                "labels": labels_map,
+                "active_labels": active_labels,
+                "source_log_id": r["source_log_id"],
+                "created_at": str(r["created_at"]) if r["created_at"] else "",
+            })
+        return items
+
+
+def delete_dataset_contribution(item_id: int) -> bool:
+    """Menghapus satu entri dataset berdasarkan ID."""
+    with get_connection() as conn:
+        cursor = conn.execute("DELETE FROM dataset_contributions WHERE id = ?", (item_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+

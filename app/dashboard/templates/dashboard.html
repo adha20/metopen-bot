@@ -320,7 +320,7 @@
       <!-- Section: Daftar Menu -->
       <div class="nav-category-title">
         <span>Daftar Menu</span>
-        <span class="text-[10px] text-slate-400">3</span>
+        <span class="text-[10px] text-slate-400">4</span>
       </div>
 
       <div class="channel-row active js-sidebar-nav" data-tab="tab-flagged">
@@ -344,6 +344,14 @@
           <span class="text-slate-400 font-bold">#</span>
           <span class="truncate">admin-log</span>
         </div>
+      </div>
+
+      <div class="channel-row js-sidebar-nav" data-tab="tab-dataset">
+        <div class="flex items-center space-x-2 truncate">
+          <span class="text-slate-400 font-bold">#</span>
+          <span class="truncate">tampilan-dataset</span>
+        </div>
+        <span id="sidebar-dataset-badge-count" class="text-[10px] text-slate-400 font-code">{{ dataset_count or 0 }}</span>
       </div>
     </div>
 
@@ -754,6 +762,108 @@
                           ✕
                         </button>
                       </div>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===================================================================
+             TAB 4: Tampilan Dataset (#tampilan-dataset)
+             =================================================================== -->
+        <div id="tab-dataset" class="tab-panel hidden space-y-4">
+          <div class="flex items-center justify-between pb-2 border-b border-[var(--dc-border)]">
+            <div>
+              <h2 class="text-sm font-bold text-slate-900">Tampilan Dataset Kontribusi</h2>
+              <p class="text-xs text-slate-500 mt-0.5">Daftar kalimat/tweet kontribusi yang tersimpan untuk pelatihan model (13 kolom re_dataset.csv).</p>
+            </div>
+            <div class="flex items-center space-x-2">
+              <span id="dataset-total-counter" class="text-xs text-slate-500 font-code">{{ dataset_items|length }} entri tersimpan</span>
+              <a href="/api/dataset/export" download="re_dataset_contributions.csv" class="btn-dc btn-dc-secondary flex items-center text-xs py-1 px-2.5" title="Unduh format CSV 13-kolom">
+                <svg class="w-3.5 h-3.5 mr-1.5 text-[#5865F2]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                </svg>
+                <span>Unduh CSV</span>
+              </a>
+            </div>
+          </div>
+
+          <!-- Filter Toolbar with Floating Pill Input -->
+          <div class="p-3 bg-white border border-[var(--dc-border)] rounded-lg flex flex-col md:flex-row items-center justify-between gap-3">
+            <div class="w-full md:w-80">
+              <input id="search-dataset-input" type="text" placeholder="Cari konten tweet/kalimat dataset..." class="dc-floating-input text-xs" />
+            </div>
+
+            <div class="flex items-center space-x-2 w-full md:w-auto">
+              <select id="filter-dataset-label-select" class="dc-floating-input text-xs py-1.5">
+                <option value="all">Semua Label Anotasi</option>
+                <option value="HS">Hate Speech (HS)</option>
+                <option value="Abusive">Abusive</option>
+                <option value="HS_Individual">Target: Individu</option>
+                <option value="HS_Group">Target: Kelompok</option>
+                <option value="HS_Religion">Kategori: Agama</option>
+                <option value="HS_Race">Kategori: Ras</option>
+                <option value="HS_Physical">Kategori: Fisik</option>
+                <option value="HS_Gender">Kategori: Gender</option>
+                <option value="HS_Strong">Keparahan: Strong</option>
+                <option value="CLEAN">Aman / Bersih (Non-HS)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Data Table with Live Filter & Delete Action -->
+          <div class="bg-white border border-[var(--dc-border)] rounded-lg overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th class="w-14 text-center">ID</th>
+                    <th>Konten Tweet / Pesan</th>
+                    <th class="w-64">Label Anotasi (Multi-Label)</th>
+                    <th class="w-24 text-center">Source Log</th>
+                    <th class="w-28">Waktu Dibuat</th>
+                    <th class="w-20 text-center">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="dataset-tbody">
+                  {% for item in dataset_items %}
+                  <tr id="dataset-row-{{ item.id }}" class="dataset-table-row" data-tweet="{{ item.tweet|lower }}" data-labels="{{ item.active_labels|join(',') }}">
+                    <td class="text-center font-code text-xs text-slate-500 font-bold">#{{ item.id }}</td>
+                    <td class="max-w-md">
+                      <div class="text-slate-900 text-xs font-medium leading-relaxed">{{ item.tweet }}</div>
+                    </td>
+                    <td>
+                      <div class="flex flex-wrap gap-1">
+                        {% if item.active_labels %}
+                          {% for lbl in item.active_labels %}
+                            <span class="badge badge-accent font-code mr-1">{{ lbl }}</span>
+                          {% endfor %}
+                        {% else %}
+                          <span class="badge badge-positive font-code">Aman / Bersih</span>
+                        {% endif %}
+                      </div>
+                    </td>
+                    <td class="text-center font-code text-xs text-slate-500">
+                      {% if item.source_log_id %}
+                        <span class="text-[#5865F2] font-semibold">#msg_{{ item.source_log_id }}</span>
+                      {% else %}
+                        <span class="text-slate-400">-</span>
+                      {% endif %}
+                    </td>
+                    <td class="font-code text-xs text-slate-500">{{ item.created_at[:19] }}</td>
+                    <td class="text-center">
+                      <button class="btn-dc btn-dc-sm btn-dc-danger js-delete-dataset-item" data-id="{{ item.id }}" data-tweet="{{ item.tweet }}" title="Hapus entri ini dari dataset">
+                        Hapus
+                      </button>
+                    </td>
+                  </tr>
+                  {% else %}
+                  <tr id="dataset-empty-row">
+                    <td colspan="6" class="p-8 text-center text-slate-400 text-xs">
+                      Belum ada data kontribusi dataset. Klik tombol <strong>+ Dataset</strong> pada pesan di Antrean Tinjauan atau tab Pengguna untuk menambahkan.
                     </td>
                   </tr>
                   {% endfor %}

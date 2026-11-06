@@ -13,10 +13,12 @@ from app.database.db import (
     apply_user_action,
     count_dataset_contributions,
     delete_analysis_log,
+    delete_dataset_contribution,
     execute_dashboard_review_action,
     export_dataset_contributions_csv,
     fetch_audit_logs,
     fetch_dashboard_stats,
+    fetch_dataset_contributions,
     fetch_flagged_queue,
     fetch_label_distribution,
     fetch_log_by_id,
@@ -89,6 +91,7 @@ def index(request: Request):
             "label_dist": fetch_label_distribution(),
             "users_summary": fetch_users_summary(),
             "dataset_count": count_dataset_contributions(),
+            "dataset_items": fetch_dataset_contributions(),
         },
     )
 
@@ -254,3 +257,16 @@ def api_dataset_export():
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=re_dataset_contributions.csv"},
     )
+
+
+@router.get("/api/dataset/list", tags=["Dashboard"])
+def api_dataset_list(search: str | None = None):
+    return fetch_dataset_contributions(search=search)
+
+
+@router.delete("/api/dataset/{item_id}", tags=["Dashboard"])
+def api_dataset_delete(item_id: int):
+    success = delete_dataset_contribution(item_id)
+    if not success:
+        return _error("Data dataset tidak ditemukan.", 404)
+    return {"success": True, "total": count_dataset_contributions()}

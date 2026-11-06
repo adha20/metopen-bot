@@ -12,6 +12,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initUserAccordion();
   initDiscordModals();
   initDatasetModal();
+  initDatasetView();
   initJumpToUser();
 });
 
@@ -854,6 +855,16 @@ function initDatasetModal() {
           badge.textContent = data.total;
         }
 
+        const sidebarBadge = document.getElementById("sidebar-dataset-badge-count");
+        if (sidebarBadge && data.total !== undefined) {
+          sidebarBadge.textContent = data.total;
+        }
+
+        const counter = document.getElementById("dataset-total-counter");
+        if (counter && data.total !== undefined) {
+          counter.textContent = `${data.total} entri tersimpan`;
+        }
+
         // Tandai tombol sebagai sudah ditambahkan (✓ Di Dataset) di seluruh tab
         const curMsgId = msgIdInput ? msgIdInput.value : "";
         if (curMsgId) {
@@ -861,6 +872,50 @@ function initDatasetModal() {
             const isSm = btn.classList.contains("btn-dc-sm");
             btn.outerHTML = `<button class="btn-dc ${isSm ? "btn-dc-sm" : ""} btn-dc-secondary opacity-60 cursor-not-allowed" disabled title="Pesan ini sudah ditambahkan ke dataset">✓ Di Dataset</button>`;
           });
+        }
+
+        // Sisipkan entri baru secara dinamis ke tabel tampilan dataset
+        const tbody = document.getElementById("dataset-tbody");
+        if (tbody) {
+          const emptyRow = document.getElementById("dataset-empty-row");
+          if (emptyRow) emptyRow.classList.add("hidden");
+
+          const textEl = document.getElementById("dataset-modal-text");
+          const tweetText = textEl ? textEl.value.trim() : "";
+          const activeLabels = [];
+          for (const key of TAXONOMY_KEYS) {
+            const chk = document.getElementById(`dataset-lbl-${key}`);
+            if (chk && chk.checked) activeLabels.push(key);
+          }
+          const labelsHtml = activeLabels.length > 0
+            ? activeLabels.map((l) => `<span class="badge badge-accent font-code mr-1">${escapeHtml(l)}</span>`).join("")
+            : `<span class="badge badge-positive font-code">Aman / Bersih</span>`;
+
+          const srcId = curMsgId ? escapeHtml(curMsgId) : "-";
+          const newRow = document.createElement("tr");
+          newRow.id = `dataset-row-${data.id}`;
+          newRow.className = "dataset-table-row";
+          newRow.setAttribute("data-tweet", tweetText.toLowerCase());
+          newRow.setAttribute("data-labels", activeLabels.join(","));
+          newRow.innerHTML = `
+            <td class="text-center font-code text-xs text-slate-500 font-bold">#${data.id}</td>
+            <td class="max-w-md">
+              <div class="text-slate-900 text-xs font-medium leading-relaxed">${escapeHtml(tweetText)}</div>
+            </td>
+            <td>
+              <div class="flex flex-wrap gap-1">${labelsHtml}</div>
+            </td>
+            <td class="text-center font-code text-xs text-slate-500">
+              ${curMsgId ? `<span class="text-[#5865F2] font-semibold">${srcId}</span>` : `<span class="text-slate-400">-</span>`}
+            </td>
+            <td class="font-code text-xs text-slate-500">Baru saja</td>
+            <td class="text-center">
+              <button class="btn-dc btn-dc-sm btn-dc-danger js-delete-dataset-item" data-id="${data.id}" data-tweet="${escapeHtml(tweetText)}" title="Hapus entri ini dari dataset">
+                Hapus
+              </button>
+            </td>
+          `;
+          tbody.prepend(newRow);
         }
 
         showNotice(`Kalimat berhasil disimpan ke dataset (Total: ${data.total})!`, "success");
@@ -878,6 +933,112 @@ function initDatasetModal() {
       }
     });
   }
+}
+
+/**
+ * Tab 4: Tampilan Dataset - Live Search, Filter Label, & Hapus Entri
+ */
+function initDatasetView() {
+  const searchInput = document.getElementById("search-dataset-input");
+  const filterSelect = document.getElementById("filter-dataset-label-select");
+
+  function filterDatasetRows() {
+    const query = (searchInput?.value || "").toLowerCase().trim();
+    const labelFilter = filterSelect?.value || "all";
+    const rows = document.querySelectorAll(".dataset-table-row");
+    let visibleCount = 0;
+
+    rows.forEach((row) => {
+      const tweet = row.getAttribute("data-tweet") || "";
+      const labels = (row.getAttribute("data-labels") || "").split(",").filter(Boolean);
+
+      const matchText = !query || tweet.includes(query);
+      let matchLabel = true;
+      if (labelFilter === "CLEAN") {
+        matchLabel = labels.length === 0;
+      } else if (labelFilter !== "all") {
+        matchLabel = labels.includes(labelFilter);
+      }
+
+      if (matchText && matchLabel) {
+        row.classList.remove("hidden");
+        visibleCount++;
+      } else {
+        row.classList.add("hidden");
+      }
+    });
+
+    const emptyRow = document.getElementById("dataset-empty-row");
+    if (emptyRow) {
+      if (visibleCount === 0) {
+        emptyRow.classList.remove("hidden");
+      } else {
+        emptyRow.classList.add("hidden");
+      }
+    }
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener("input", filterDatasetRows);
+  }
+  if (filterSelect) {
+    filterSelect.addEventListener("change", filterDatasetRows);
+  }
+
+  // Aksi Hapus Entri Dataset
+  document.addEventListener("click", async (e) => {
+    const deleteBtn = e.target.closest(".js-delete-dataset-item");
+    if (!deleteBtn) return;
+
+    e.preventDefault();
+    const itemId = deleteBtn.getAttribute("data-id");
+    const tweet = deleteBtn.getAttribute("data-tweet") || "";
+
+    openConfirmModal({
+      title: "Hapus dari Dataset",
+      message: `Apakah Anda yakin ingin menghapus entri #${itemId} ini dari dataset kontribusi?`,
+      quote: `"${tweet}"`,
+      subtext: "Entri ini tidak akan dimasukkan saat Anda mengunduh dataset CSV.",
+      confirmText: "Hapus Entri",
+      confirmClass: "btn-dc-danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/dataset/${itemId}`, { method: "DELETE" });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(`Gagal menghapus entri dataset: ${err.error || "Kesalahan server"}`);
+            return;
+          }
+          const data = await res.json();
+          const row = document.getElementById(`dataset-row-${itemId}`);
+          if (row) {
+            row.style.transition = "opacity 0.2s ease, transform 0.2s ease";
+            row.style.opacity = "0";
+            row.style.transform = "translateX(-8px)";
+            setTimeout(() => {
+              row.remove();
+              filterDatasetRows();
+            }, 200);
+          }
+
+          // Perbarui badge & counter jumlah dataset
+          const badge = document.getElementById("badge-dataset-count");
+          if (badge && data.total !== undefined) badge.textContent = data.total;
+
+          const sidebarBadge = document.getElementById("sidebar-dataset-badge-count");
+          if (sidebarBadge && data.total !== undefined) sidebarBadge.textContent = data.total;
+
+          const counter = document.getElementById("dataset-total-counter");
+          if (counter && data.total !== undefined) counter.textContent = `${data.total} entri tersimpan`;
+
+          showNotice(`Entri #${itemId} berhasil dihapus dari dataset.`, "success");
+        } catch (err) {
+          console.error("Delete dataset error:", err);
+          alert("Koneksi gagal saat menghapus entri dataset.");
+        }
+      },
+    });
+  });
 }
 
 /**
