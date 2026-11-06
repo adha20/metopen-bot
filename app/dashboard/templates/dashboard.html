@@ -336,7 +336,7 @@
           <span class="text-slate-400 font-bold">#</span>
           <span class="truncate">pengguna</span>
         </div>
-        <span class="text-[10px] text-slate-400 font-code">{{ users_summary|length }}</span>
+        <span id="sidebar-users-count" class="text-[10px] text-slate-400 font-code">{{ users_summary|length }}</span>
       </div>
 
       <div class="channel-row js-sidebar-nav" data-tab="tab-audit">
@@ -387,6 +387,10 @@
         <h1 id="viewport-title" class="text-sm font-bold text-slate-900">antrean-tinjauan</h1>
       </div>
       <div class="flex items-center space-x-2">
+        <div class="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] text-emerald-700 font-medium" title="Data diperbarui otomatis setiap 3 detik">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>Live Sync</span>
+        </div>
         <a href="/api/dataset/export" download="re_dataset_contributions.csv" class="btn-dc btn-dc-secondary flex items-center text-xs py-1 px-2.5" title="Unduh dataset kontribusi format CSV 13-kolom">
           <svg class="w-3.5 h-3.5 mr-1.5 text-[#5865F2]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
@@ -413,19 +417,19 @@
 
           <div class="kpi-metric-card">
             <div class="text-[11px] text-slate-500 font-medium mb-1">Total Dianalisis</div>
-            <div class="text-xl font-bold text-slate-900 num-tabular">{{ stats.total_messages_today }}</div>
+            <div id="kpi-total-messages" class="text-xl font-bold text-slate-900 num-tabular">{{ stats.total_messages_today }}</div>
             <div class="text-[11px] text-slate-500 mt-1">Pesan hari ini</div>
           </div>
 
           <div class="kpi-metric-card">
             <div class="text-[11px] text-slate-500 font-medium mb-1">Pelanggaran Dideteksi</div>
-            <div class="text-xl font-bold text-red-600 num-tabular">{{ stats.mitigated_count + stats.flagged_count }}</div>
-            <div class="text-[11px] text-slate-500 mt-1">{{ stats.violation_rate_pct }}% rasio pelanggaran</div>
+            <div id="kpi-violations-count" class="text-xl font-bold text-red-600 num-tabular">{{ stats.mitigated_count + stats.flagged_count }}</div>
+            <div id="kpi-violations-rate" class="text-[11px] text-slate-500 mt-1">{{ stats.violation_rate_pct }}% rasio pelanggaran</div>
           </div>
 
           <div class="kpi-metric-card">
             <div class="text-[11px] text-slate-500 font-medium mb-1">Latensi Inferensi</div>
-            <div class="text-xl font-bold text-green-600 num-tabular">{{ stats.avg_latency_ms }} ms</div>
+            <div id="kpi-avg-latency" class="text-xl font-bold text-green-600 num-tabular">{{ stats.avg_latency_ms }} ms</div>
             <div class="text-[11px] text-slate-500 mt-1">Rata-rata waktu respons</div>
           </div>
         </div>

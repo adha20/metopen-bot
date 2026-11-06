@@ -14,6 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initDatasetModal();
   initDatasetView();
   initJumpToUser();
+  initAutoRefresh();
 });
 
 // State tracking for active modals
@@ -293,6 +294,188 @@ function updateFlaggedCount() {
       `;
     }
   }
+}
+
+let autoRefreshTimer = null;
+let lastFlaggedQueueJson = "";
+
+function renderFlaggedCards(items) {
+  const container = document.getElementById("flagged-list-container");
+  if (!container) return;
+
+  if (!items || items.length === 0) {
+    container.innerHTML = `
+      <div class="py-12 text-center text-slate-500 text-xs">
+        Semua pesan telah selesai ditinjau. Tidak ada antrean baru saat ini.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = items
+    .map((item) => {
+      let confBadge = "";
+      const conf = Number(item.confidence || 0);
+      if (conf >= 0.90) {
+        confBadge = `<span class="badge badge-negative num-tabular" title="Keyakinan Sangat Tinggi (≥90%)">Keyakinan: ${(conf * 100).toFixed(1)}%</span>`;
+      } else if (conf >= 0.75) {
+        confBadge = `<span class="badge badge-warning num-tabular" title="Keyakinan Sedang (75%-89%)">Keyakinan: ${(conf * 100).toFixed(1)}%</span>`;
+      } else {
+        confBadge = `<span class="badge badge-positive num-tabular" title="Keyakinan Rendah (<75%)">Keyakinan: ${(conf * 100).toFixed(1)}%</span>`;
+      }
+
+      const activeLabels = Object.entries(item.labels || {})
+        .filter(([_, val]) => Boolean(val))
+        .map(([lbl, _]) => `<span class="badge badge-accent font-code mr-1">${escapeHtml(lbl)}</span>`)
+        .join("");
+
+      const targetBadge = (item.target && !item.target.includes("Tidak ada"))
+        ? `<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">Target: ${escapeHtml(item.target)}</span>`
+        : "";
+
+      const pointsBadge = item.violation_points
+        ? `<span class="px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 font-bold">${escapeHtml(item.violation_points)}</span>`
+        : "";
+
+      const datasetBtnHtml = item.in_dataset
+        ? `<button class="btn-dc btn-dc-secondary opacity-60 cursor-not-allowed" disabled title="Pesan ini sudah ditambahkan ke dataset">✓ Di Dataset</button>`
+        : `<button class="btn-dc btn-dc-primary js-open-dataset-modal" data-message-id="${item.message_id}" data-content="${escapeHtml(item.content)}" data-labels='${JSON.stringify(item.labels || {})}' title="Tambah kalimat ini ke dataset pelatihan">+ Dataset</button>`;
+
+      const avatar = item.author_avatar || item.author.replace("@", "").substring(0, 2).toUpperCase();
+      const timeStr = item.timestamp ? item.timestamp.substring(11, 19) : "";
+
+      return `
+        <div id="flagged-card-${item.message_id}" class="flagged-item-card">
+          <div class="flex items-start justify-between gap-4">
+            <div class="flex items-center space-x-3">
+              <div class="w-9 h-9 rounded-full bg-[#5865F2] flex items-center justify-center font-bold text-white text-xs flex-shrink-0">
+                ${escapeHtml(avatar)}
+              </div>
+              <div>
+                <div class="flex items-center space-x-2">
+                  <button class="font-bold text-slate-900 text-sm hover:text-[#5865F2] hover:underline cursor-pointer js-jump-to-user text-left" data-author="${escapeHtml(item.author)}" title="Klik untuk lihat profil di tab Pengguna">
+                    ${escapeHtml(item.author)}
+                  </button>
+                  <span class="text-[10px] text-slate-500 font-code">di ${escapeHtml(item.channel)}</span>
+                </div>
+                <div class="text-[11px] text-slate-500 mt-0.5 font-code">
+                  ${escapeHtml(timeStr)}
+                </div>
+              </div>
+            </div>
+            <div class="text-right flex-shrink-0">
+              ${confBadge}
+            </div>
+          </div>
+
+          <div class="dc-quote-box mt-3">
+            "${escapeHtml(item.content)}"
+          </div>
+
+          ${(targetBadge || pointsBadge) ? `<div class="flex flex-wrap items-center gap-2 text-[11px] mt-2 font-code">${targetBadge} ${pointsBadge}</div>` : ""}
+
+          <div class="mt-2.5">
+            <div class="text-[10px] uppercase font-bold text-slate-500 mb-1.5">Taksonomi 12 Label Terdeteksi:</div>
+            <div class="flex flex-wrap gap-1">
+              ${activeLabels || '<span class="text-xs text-slate-400 font-code">None</span>'}
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end pt-3 border-t border-[var(--dc-border)] gap-1.5 mt-3">
+            ${datasetBtnHtml}
+            <button class="btn-dc btn-dc-secondary js-open-detail-modal" data-message-id="${item.message_id}">
+              Edit
+            </button>
+            <button class="btn-dc btn-dc-success js-review-action" data-message-id="${item.message_id}" data-action="pardon">
+              Pulihkan
+            </button>
+            <button class="btn-dc btn-dc-warning js-review-action" data-message-id="${item.message_id}" data-action="warn">
+              Peringatan
+            </button>
+            <button class="btn-dc btn-dc-danger js-review-action" data-message-id="${item.message_id}" data-action="timeout_1h" title="Timeout 1 Jam (Mute Sementara)">
+              Timeout (1 Jam)
+            </button>
+            <button class="btn-dc btn-dc-danger js-review-action" data-message-id="${item.message_id}" data-action="kick" title="Keluarkan dari server">
+              Kick
+            </button>
+            <button class="btn-dc btn-dc-danger js-review-action" data-message-id="${item.message_id}" data-action="ban" title="Ban (pilih durasi)">
+              Ban
+            </button>
+          </div>
+
+          <div class="text-[10px] text-slate-500 mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between font-code">
+            <div>
+              Tindakan bot: <strong class="text-slate-800">${escapeHtml(item.automated_action || item.status)}</strong>
+            </div>
+            <div class="text-slate-400 num-tabular">
+              Latensi: ${Number(item.latency_ms || 0).toFixed(1)} ms
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function pollRealtimeUpdates() {
+  // 1. Lewati jika ada modal yang sedang terbuka agar form admin tidak tertutup/terganggu
+  const openModal = document.querySelector(".fixed.inset-0:not(.hidden)");
+  if (openModal) return;
+
+  // 2. Lewati jika kursor admin sedang aktif mengetik di input / textarea
+  const activeEl = document.activeElement;
+  if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "SELECT")) {
+    return;
+  }
+
+  try {
+    // 3. Ambil statistik terbaru untuk KPI bar & badge sidebar
+    const statsRes = await fetch("/api/stats");
+    if (statsRes.ok) {
+      const stats = await statsRes.json();
+      const kpiFlagged = document.getElementById("kpi-flagged-count");
+      const kpiTotal = document.getElementById("kpi-total-messages");
+      const kpiViolations = document.getElementById("kpi-violations-count");
+      const kpiRate = document.getElementById("kpi-violations-rate");
+      const kpiLat = document.getElementById("kpi-avg-latency");
+      const badgeFlagged = document.getElementById("flagged-badge-count");
+
+      if (kpiFlagged) kpiFlagged.innerText = `${stats.flagged_count} Pesan`;
+      if (kpiTotal) kpiTotal.innerText = stats.total_messages_today;
+      if (kpiViolations) kpiViolations.innerText = stats.mitigated_count + stats.flagged_count;
+      if (kpiRate) kpiRate.innerText = `${stats.violation_rate_pct}% rasio pelanggaran`;
+      if (kpiLat) kpiLat.innerText = `${Number(stats.avg_latency_ms || 0).toFixed(1)} ms`;
+      if (badgeFlagged) badgeFlagged.innerText = stats.flagged_count;
+    }
+
+    // 4. Update data tab yang sedang aktif dilihat oleh admin
+    const activeTab = document.querySelector(".tab-panel:not(.hidden)");
+    const activeTabId = activeTab ? activeTab.id : "";
+
+    if (activeTabId === "tab-flagged") {
+      const flaggedRes = await fetch("/api/flagged-queue");
+      if (flaggedRes.ok) {
+        const flaggedData = await flaggedRes.json();
+        const currentJson = JSON.stringify(flaggedData.map((f) => [f.message_id, f.status, f.in_dataset]));
+        if (currentJson !== lastFlaggedQueueJson) {
+          lastFlaggedQueueJson = currentJson;
+          renderFlaggedCards(flaggedData);
+        }
+      }
+    } else if (activeTabId === "tab-audit") {
+      await reloadAuditLogs();
+    } else if (activeTabId === "tab-users") {
+      await reloadUsersSummary();
+    }
+  } catch (err) {
+    // Silent catch saat koneksi terputus sesaat
+  }
+}
+
+function initAutoRefresh() {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  // Polling pembaruan data otomatis setiap 3 detik
+  autoRefreshTimer = setInterval(pollRealtimeUpdates, 3000);
 }
 
 /**
