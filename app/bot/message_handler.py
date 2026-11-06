@@ -8,6 +8,7 @@ from discord import Forbidden, HTTPException, Member, Message, TextChannel
 
 from app.config import settings
 from app.database.db import record_user_violation, save_analysis_result
+from app.dashboard.events import broadcaster
 
 
 def _display_name(user) -> str:
@@ -279,3 +280,15 @@ async def handle_incoming_message(message: Message) -> None:
         victim_names=", ".join(victim_names),
         confidence_score=confidence,
     )
+
+    try:
+        broadcaster.broadcast(
+            "new_message",
+            {
+                "is_violation": is_violation,
+                "label": result.get("violation_category", "Aman"),
+                "author": author_name,
+            },
+        )
+    except Exception:
+        pass

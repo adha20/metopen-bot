@@ -297,7 +297,11 @@ function updateFlaggedCount() {
 }
 
 let autoRefreshTimer = null;
+let eventSource = null;
+let realtimeDebounceTimer = null;
 let lastFlaggedQueueJson = "";
+let lastDatasetJson = "";
+let filterDatasetRows = null;
 
 function renderFlaggedCards(items) {
   const container = document.getElementById("flagged-list-container");
@@ -417,6 +421,145 @@ function renderFlaggedCards(items) {
     .join("");
 }
 
+function triggerRealtimeUpdate() {
+  if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
+  realtimeDebounceTimer = setTimeout(() => {
+    pollRealtimeUpdates();
+  }, 200);
+}
+
+function updateLiveSyncIndicator(status) {
+  const indicator = document.getElementById("live-sync-indicator");
+  const dot = document.getElementById("live-sync-dot");
+  const text = document.getElementById("live-sync-text");
+  if (!indicator || !dot || !text) return;
+
+  if (status === "connected") {
+    indicator.className = "flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] text-emerald-700 font-medium transition-colors";
+    indicator.title = "Terhubung realtime via Server-Sent Events (SSE). Pembaruan instan aktif.";
+    dot.className = "w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse";
+    text.innerText = "Live Realtime";
+  } else if (status === "connecting") {
+    indicator.className = "flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[10px] text-amber-700 font-medium transition-colors";
+    indicator.title = "Menghubungkan ke stream realtime SSE...";
+    dot.className = "w-1.5 h-1.5 rounded-full bg-amber-400";
+    text.innerText = "Menghubungkan...";
+  } else {
+    indicator.className = "flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-[10px] text-slate-600 font-medium transition-colors";
+    indicator.title = "Mode sinkronisasi berkala (polling cadangan aktif).";
+    dot.className = "w-1.5 h-1.5 rounded-full bg-slate-400";
+    text.innerText = "Live Sync";
+  }
+}
+
+function initSSE() {
+  if (typeof window.EventSource === "undefined") {
+    updateLiveSyncIndicator("fallback");
+    return;
+  }
+
+  if (eventSource) {
+    try {
+      eventSource.close();
+    } catch (_) {}
+  }
+
+  updateLiveSyncIndicator("connecting");
+
+  try {
+    eventSource = new EventSource("/api/events");
+
+    eventSource.onopen = () => {
+      updateLiveSyncIndicator("connected");
+    };
+
+    eventSource.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload && payload.type) {
+          triggerRealtimeUpdate();
+          if (payload.type === "new_message" && payload.data && payload.data.is_violation) {
+            showNotice(`Pesan berpeluang pelanggaran baru dari ${payload.data.author || "pengguna"} terdeteksi!`, "danger");
+          }
+        }
+      } catch (e) {
+        triggerRealtimeUpdate();
+      }
+    };
+
+    eventSource.onerror = () => {
+      updateLiveSyncIndicator("connecting");
+    };
+  } catch (err) {
+    updateLiveSyncIndicator("fallback");
+  }
+}
+
+async function reloadDatasetTable() {
+  const tbody = document.getElementById("dataset-tbody");
+  if (!tbody) return;
+
+  try {
+    const res = await fetch("/api/dataset/list");
+    if (!res.ok) return;
+    const items = await res.json();
+
+    const currentJson = JSON.stringify((items || []).map((x) => [x.id, x.tweet, x.active_labels]));
+    if (currentJson === lastDatasetJson) return;
+    lastDatasetJson = currentJson;
+
+    if (!items || items.length === 0) {
+      tbody.innerHTML = `
+        <tr id="dataset-empty-row">
+          <td colspan="6" class="p-8 text-center text-slate-400 text-xs">
+            Belum ada data kontribusi dataset. Klik tombol <strong>+ Dataset</strong> pada pesan di Antrean Tinjauan atau tab Pengguna untuk menambahkan.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = items
+      .map((item) => {
+        const activeLabels = (item.active_labels || [])
+          .map((lbl) => `<span class="badge badge-accent font-code mr-1">${escapeHtml(lbl)}</span>`)
+          .join("");
+
+        const sourceHtml = item.source_log_id
+          ? `<span class="text-[#5865F2] font-semibold">#msg_${item.source_log_id}</span>`
+          : `<span class="text-slate-400">-</span>`;
+
+        return `
+          <tr id="dataset-row-${item.id}" class="dataset-table-row" data-tweet="${escapeHtml(item.tweet.toLowerCase())}" data-labels="${(item.active_labels || []).join(',')}">
+            <td class="text-center font-code text-xs text-slate-500 font-bold">#${item.id}</td>
+            <td class="max-w-md">
+              <div class="text-slate-900 text-xs font-medium leading-relaxed">${escapeHtml(item.tweet)}</div>
+            </td>
+            <td>
+              <div class="flex flex-wrap gap-1">
+                ${activeLabels || '<span class="badge badge-positive font-code">Aman / Bersih</span>'}
+              </div>
+            </td>
+            <td class="text-center font-code text-xs text-slate-500">${sourceHtml}</td>
+            <td class="font-code text-xs text-slate-500">${item.created_at ? item.created_at.substring(0, 19) : ''}</td>
+            <td class="text-center">
+              <button class="btn-dc btn-dc-sm btn-dc-danger js-delete-dataset-item" data-id="${item.id}" data-tweet="${escapeHtml(item.tweet)}" title="Hapus entri ini dari dataset">
+                Hapus
+              </button>
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    if (typeof filterDatasetRows === "function") {
+      filterDatasetRows();
+    }
+  } catch (err) {
+    // silent catch
+  }
+}
+
 async function pollRealtimeUpdates() {
   // 1. Lewati jika ada modal yang sedang terbuka agar form admin tidak tertutup/terganggu
   const openModal = document.querySelector(".fixed.inset-0:not(.hidden)");
@@ -439,6 +582,8 @@ async function pollRealtimeUpdates() {
       const kpiRate = document.getElementById("kpi-violations-rate");
       const kpiLat = document.getElementById("kpi-avg-latency");
       const badgeFlagged = document.getElementById("flagged-badge-count");
+      const badgeDataset = document.getElementById("badge-dataset-count");
+      const sidebarBadgeDataset = document.getElementById("sidebar-dataset-badge-count");
 
       if (kpiFlagged) kpiFlagged.innerText = `${stats.flagged_count} Pesan`;
       if (kpiTotal) kpiTotal.innerText = stats.total_messages_today;
@@ -446,6 +591,10 @@ async function pollRealtimeUpdates() {
       if (kpiRate) kpiRate.innerText = `${stats.violation_rate_pct}% rasio pelanggaran`;
       if (kpiLat) kpiLat.innerText = `${Number(stats.avg_latency_ms || 0).toFixed(1)} ms`;
       if (badgeFlagged) badgeFlagged.innerText = stats.flagged_count;
+      if (stats.dataset_count !== undefined) {
+        if (badgeDataset) badgeDataset.innerText = stats.dataset_count;
+        if (sidebarBadgeDataset) sidebarBadgeDataset.innerText = stats.dataset_count;
+      }
     }
 
     // 4. Update data tab yang sedang aktif dilihat oleh admin
@@ -466,6 +615,8 @@ async function pollRealtimeUpdates() {
       await reloadAuditLogs();
     } else if (activeTabId === "tab-users") {
       await reloadUsersSummary();
+    } else if (activeTabId === "tab-dataset") {
+      await reloadDatasetTable();
     }
   } catch (err) {
     // Silent catch saat koneksi terputus sesaat
@@ -473,9 +624,10 @@ async function pollRealtimeUpdates() {
 }
 
 function initAutoRefresh() {
+  initSSE();
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-  // Polling pembaruan data otomatis setiap 3 detik
-  autoRefreshTimer = setInterval(pollRealtimeUpdates, 3000);
+  // Polling cadangan (fallback) tiap 5 detik jika SSE belum mengirim event
+  autoRefreshTimer = setInterval(pollRealtimeUpdates, 5000);
 }
 
 /**
@@ -1125,7 +1277,7 @@ function initDatasetView() {
   const searchInput = document.getElementById("search-dataset-input");
   const filterSelect = document.getElementById("filter-dataset-label-select");
 
-  function filterDatasetRows() {
+  filterDatasetRows = function () {
     const query = (searchInput?.value || "").toLowerCase().trim();
     const labelFilter = filterSelect?.value || "all";
     const rows = document.querySelectorAll(".dataset-table-row");

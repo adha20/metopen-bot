@@ -387,9 +387,9 @@
         <h1 id="viewport-title" class="text-sm font-bold text-slate-900">antrean-tinjauan</h1>
       </div>
       <div class="flex items-center space-x-2">
-        <div class="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] text-emerald-700 font-medium" title="Data diperbarui otomatis setiap 3 detik">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span>Live Sync</span>
+        <div id="live-sync-indicator" class="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] text-emerald-700 font-medium transition-colors" title="Terhubung secara realtime (Server-Sent Events)">
+          <span id="live-sync-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span id="live-sync-text">Live Sync</span>
         </div>
         <a href="/api/dataset/export" download="re_dataset_contributions.csv" class="btn-dc btn-dc-secondary flex items-center text-xs py-1 px-2.5" title="Unduh dataset kontribusi format CSV 13-kolom">
           <svg class="w-3.5 h-3.5 mr-1.5 text-[#5865F2]" fill="none" stroke="currentColor" viewBox="0 0 24 24">

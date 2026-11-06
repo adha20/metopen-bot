@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+
+from app.dashboard.events import broadcaster
 
 from app.bot.actions import DISCORD_ACTIONS, ActionError, run_discord_action, run_restore_message
 from app.database.db import (
@@ -135,6 +138,8 @@ def api_message_update(message_id: str, body: MessageUpdateBody):
     if not raw_id:
         return _error("Invalid message ID", 400)
     updated = update_analysis_log(log_id=raw_id, status=body.status, admin_notes=body.admin_notes)
+    if updated:
+        broadcaster.broadcast("message_updated", {"message_id": message_id})
     return updated if updated else _error("Message not found", 404)
 
 
@@ -145,6 +150,7 @@ def api_message_delete(message_id: str):
         return _error("Invalid message ID", 400)
     if not delete_analysis_log(raw_id):
         return _error("Message not found", 404)
+    broadcaster.broadcast("message_deleted", {"message_id": message_id})
     return {"success": True, "message_id": message_id}
 
 
@@ -193,6 +199,7 @@ def api_review_action(body: ReviewActionBody):
     if not result:
         return _error("Message not found", 404)
     result["discord_message"] = discord_message
+    broadcaster.broadcast("review_action", {"message_id": raw_id, "action": action})
     return result
 
 
@@ -223,6 +230,7 @@ def api_user_action(body: UserActionBody):
             return _error(str(err), err.status_code)
 
     resolved = apply_user_action(user_id, action, reason, duration)
+    broadcaster.broadcast("user_action", {"user_id": user_id, "action": action})
     return {"success": True, "resolved_messages": resolved, "discord_message": discord_message}
 
 
@@ -239,6 +247,7 @@ def api_dataset_add(body: DatasetAddBody):
 
     try:
         row_id = save_dataset_contribution(text, body.labels, source_id)
+        broadcaster.broadcast("dataset_updated", {"action": "add", "id": row_id})
     except ValueError as err:
         return _error(str(err), 409, already_added=True)
 
@@ -269,4 +278,36 @@ def api_dataset_delete(item_id: int):
     success = delete_dataset_contribution(item_id)
     if not success:
         return _error("Data dataset tidak ditemukan.", 404)
+    broadcaster.broadcast("dataset_updated", {"action": "delete", "id": item_id})
     return {"success": True, "total": count_dataset_contributions()}
+
+
+@router.get("/api/events", tags=["Dashboard"])
+async def api_events(request: Request):
+    """Server-Sent Events (SSE) endpoint untuk live auto-refresh dashboard tanpa reload."""
+    queue = await broadcaster.subscribe()
+
+    async def event_generator():
+        try:
+            yield "event: ping\ndata: {}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=20.0)
+                    yield f"event: message\ndata: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            broadcaster.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+

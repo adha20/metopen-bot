@@ -140,6 +140,15 @@ def run_tests() -> None:
     assert resp_del.status_code == 200, f"Gagal delete dataset: {resp_del.status_code}"
     print(f"      ✅ Berhasil menghapus entri dataset #{test_del_id}.")
 
+    # 7. Uji SSE Realtime Stream (/api/events)
+    print("[7/7] Menguji SSE Realtime Stream (GET /api/events)...")
+    with client.stream("GET", "/api/events") as sse_stream:
+        assert sse_stream.status_code == 200, f"Gagal SSE stream: {sse_stream.status_code}"
+        assert sse_stream.headers["content-type"].startswith("text/event-stream")
+        first_line = next(sse_stream.iter_lines())
+        assert "event: ping" in first_line
+    print("      ✅ Berhasil terhubung ke Server-Sent Events (SSE) live broadcast stream.")
+
     print("=" * 60)
     print("🎉 SEMUA PENGUJIAN SELESAI & BERHASIL 100%!")
     print("=" * 60)

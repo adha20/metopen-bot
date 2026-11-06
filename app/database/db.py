@@ -665,6 +665,7 @@ def fetch_dashboard_stats() -> dict[str, Any]:
         mitigated = conn.execute(
             "SELECT COUNT(*) AS c FROM analysis_logs WHERE message_deleted = 1"
         ).fetchone()["c"]
+        dataset_cnt = conn.execute("SELECT COUNT(*) AS c FROM dataset_contributions").fetchone()["c"]
         avg_lat_row = conn.execute("SELECT AVG(latency_ms) AS c FROM analysis_logs").fetchone()
         avg_lat = avg_lat_row["c"] if avg_lat_row and avg_lat_row["c"] else 0.0
         violation_rate = round((float(mitigated) / float(total)) * 100, 1) if total > 0 else 0.0
@@ -678,6 +679,7 @@ def fetch_dashboard_stats() -> dict[str, Any]:
             "total_messages_today": int(total),
             "flagged_count": int(pending),
             "mitigated_count": int(mitigated),
+            "dataset_count": int(dataset_cnt),
             "violation_rate_pct": violation_rate,
             "macro_f1": 0.892,
             "precision": 0.898,
