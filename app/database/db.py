@@ -54,6 +54,61 @@ def _ensure_columns(conn: sqlite3.Connection, table_name: str, columns: dict[str
             conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
 
 
+def _migrate_remove_legacy_columns(conn: sqlite3.Connection) -> None:
+    """Menghapus kolom skema lama (symbols, trace, final_state, matched_keywords) agar murni IndoBERT."""
+    existing_cols = _table_columns(conn, "analysis_logs")
+    legacy_cols = {"symbols", "trace", "final_state", "matched_keywords"}
+    if not legacy_cols.intersection(existing_cols):
+        return
+
+    clean_cols = [
+        "id", "raw_content", "normalized_content", "label",
+        "user_id", "user_name", "channel_id", "channel_name",
+        "guild_id", "guild_name", "violation_points_added",
+        "total_violation_points", "action_taken", "message_deleted",
+        "user_kicked", "active_labels", "severity", "latency_ms",
+        "victim_names", "confidence_score", "created_at",
+        "review_status", "admin_notes",
+    ]
+    cols_to_copy = [c for c in clean_cols if c in existing_cols]
+    cols_str = ", ".join(cols_to_copy)
+
+    conn.execute(
+        """
+        CREATE TABLE analysis_logs_indobert_clean (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            raw_content TEXT NOT NULL,
+            normalized_content TEXT NOT NULL,
+            label TEXT NOT NULL,
+            user_id TEXT,
+            user_name TEXT,
+            channel_id TEXT,
+            channel_name TEXT,
+            guild_id TEXT,
+            guild_name TEXT,
+            violation_points_added INTEGER NOT NULL DEFAULT 0,
+            total_violation_points INTEGER NOT NULL DEFAULT 0,
+            action_taken TEXT NOT NULL DEFAULT '',
+            message_deleted INTEGER NOT NULL DEFAULT 0,
+            user_kicked INTEGER NOT NULL DEFAULT 0,
+            active_labels TEXT NOT NULL DEFAULT '',
+            severity TEXT NOT NULL DEFAULT '',
+            latency_ms REAL NOT NULL DEFAULT 0.0,
+            victim_names TEXT NOT NULL DEFAULT '',
+            confidence_score REAL NOT NULL DEFAULT 0.0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            review_status TEXT NOT NULL DEFAULT 'Menunggu Tinjauan',
+            admin_notes TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(f"INSERT INTO analysis_logs_indobert_clean ({cols_str}) SELECT {cols_str} FROM analysis_logs")
+    conn.execute("DROP TABLE analysis_logs")
+    conn.execute("ALTER TABLE analysis_logs_indobert_clean RENAME TO analysis_logs")
+    conn.commit()
+    print("[DB] Skema lama berhasil dibersihkan! Tabel analysis_logs sekarang murni IndoBERT.")
+
+
 def init_db() -> None:
     with get_connection() as conn:
         conn.execute(
@@ -79,10 +134,13 @@ def init_db() -> None:
                 latency_ms REAL NOT NULL DEFAULT 0.0,
                 victim_names TEXT NOT NULL DEFAULT '',
                 confidence_score REAL NOT NULL DEFAULT 0.0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                review_status TEXT NOT NULL DEFAULT 'Menunggu Tinjauan',
+                admin_notes TEXT NOT NULL DEFAULT ''
             )
             """
         )
+        _migrate_remove_legacy_columns(conn)
         _ensure_columns(conn, "analysis_logs", ANALYSIS_LOG_REQUIRED_COLUMNS)
 
         conn.execute(
@@ -161,19 +219,6 @@ def save_analysis_result(**payload: Any) -> int:
             "victim_names": payload.get("victim_names", ""),
             "confidence_score": float(payload.get("confidence_score", 0.0)),
         }
-
-        # Kompatibilitas mundur: tangani kolom legacy jika ada NOT NULL tanpa default
-        for row in conn.execute("PRAGMA table_info(analysis_logs)").fetchall():
-            col_name = row[1]
-            not_null = bool(row[3])
-            has_default = row[4] is not None
-            is_pk = bool(row[5])
-            if (col_name in ("symbols", "trace", "final_state", "matched_keywords") or (not_null and not has_default and not is_pk)) and col_name not in data:
-                col_type = (row[2] or "").upper()
-                if "INT" in col_type or "REAL" in col_type or "NUM" in col_type:
-                    data[col_name] = 0
-                else:
-                    data[col_name] = ""
 
         fields = [col for col in data.keys() if col in existing_cols]
         placeholders = ", ".join(["?"] * len(fields))
@@ -270,10 +315,9 @@ def _row_to_message_dict(
     contributed: tuple[set[int], set[str]] | None = None,
 ) -> dict[str, Any]:
     active_labels_list = [l.strip() for l in (row["active_labels"] or "").split(",") if l.strip()]
-    lbl = row["label"] or ""
     labels_map = {
-        "HS": "HS" in active_labels_list or "Bullying" in lbl,
-        "Abusive": "Abusive" in active_labels_list or "Bullying" in lbl or lbl == "Waspada",
+        "HS": "HS" in active_labels_list,
+        "Abusive": "Abusive" in active_labels_list,
         "HS_Individual": "HS_Individual" in active_labels_list,
         "HS_Group": "HS_Group" in active_labels_list,
         "HS_Religion": "HS_Religion" in active_labels_list,
@@ -281,9 +325,9 @@ def _row_to_message_dict(
         "HS_Physical": "HS_Physical" in active_labels_list,
         "HS_Gender": "HS_Gender" in active_labels_list,
         "HS_Other": "HS_Other" in active_labels_list,
-        "HS_Weak": "HS_Weak" in active_labels_list or lbl == "Waspada",
-        "HS_Moderate": "HS_Moderate" in active_labels_list or lbl == "Indikasi Bullying",
-        "HS_Strong": "HS_Strong" in active_labels_list or lbl == "Indikasi Bullying Berat",
+        "HS_Weak": "HS_Weak" in active_labels_list,
+        "HS_Moderate": "HS_Moderate" in active_labels_list,
+        "HS_Strong": "HS_Strong" in active_labels_list,
     }
     user_name = row["user_name"] or "Pengguna"
     if not user_name.startswith("@"):
