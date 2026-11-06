@@ -138,51 +138,51 @@ def init_db() -> None:
 
 def save_analysis_result(**payload: Any) -> int:
     with get_connection() as conn:
+        existing_cols = _table_columns(conn, "analysis_logs")
+
+        data: dict[str, Any] = {
+            "raw_content": payload.get("raw_content", ""),
+            "normalized_content": payload.get("normalized_content", ""),
+            "label": payload.get("label", ""),
+            "user_id": payload.get("user_id", ""),
+            "user_name": payload.get("user_name", ""),
+            "channel_id": payload.get("channel_id", ""),
+            "channel_name": payload.get("channel_name", ""),
+            "guild_id": payload.get("guild_id", ""),
+            "guild_name": payload.get("guild_name", ""),
+            "violation_points_added": int(payload.get("violation_points_added", 0)),
+            "total_violation_points": int(payload.get("total_violation_points", 0)),
+            "action_taken": payload.get("action_taken", ""),
+            "message_deleted": 1 if payload.get("message_deleted", False) else 0,
+            "user_kicked": 1 if payload.get("user_kicked", False) else 0,
+            "active_labels": payload.get("active_labels", ""),
+            "severity": payload.get("severity", ""),
+            "latency_ms": float(payload.get("latency_ms", 0.0)),
+            "victim_names": payload.get("victim_names", ""),
+            "confidence_score": float(payload.get("confidence_score", 0.0)),
+        }
+
+        # Kompatibilitas mundur: tangani kolom legacy jika ada NOT NULL tanpa default
+        for row in conn.execute("PRAGMA table_info(analysis_logs)").fetchall():
+            col_name = row[1]
+            not_null = bool(row[3])
+            has_default = row[4] is not None
+            is_pk = bool(row[5])
+            if (col_name in ("symbols", "trace", "final_state", "matched_keywords") or (not_null and not has_default and not is_pk)) and col_name not in data:
+                col_type = (row[2] or "").upper()
+                if "INT" in col_type or "REAL" in col_type or "NUM" in col_type:
+                    data[col_name] = 0
+                else:
+                    data[col_name] = ""
+
+        fields = [col for col in data.keys() if col in existing_cols]
+        placeholders = ", ".join(["?"] * len(fields))
+        col_names = ", ".join(fields)
+        values = [data[col] for col in fields]
+
         cursor = conn.execute(
-            """
-            INSERT INTO analysis_logs (
-                raw_content,
-                normalized_content,
-                label,
-                user_id,
-                user_name,
-                channel_id,
-                channel_name,
-                guild_id,
-                guild_name,
-                violation_points_added,
-                total_violation_points,
-                action_taken,
-                message_deleted,
-                user_kicked,
-                active_labels,
-                severity,
-                latency_ms,
-                victim_names,
-                confidence_score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                payload.get("raw_content", ""),
-                payload.get("normalized_content", ""),
-                payload.get("label", ""),
-                payload.get("user_id", ""),
-                payload.get("user_name", ""),
-                payload.get("channel_id", ""),
-                payload.get("channel_name", ""),
-                payload.get("guild_id", ""),
-                payload.get("guild_name", ""),
-                int(payload.get("violation_points_added", 0)),
-                int(payload.get("total_violation_points", 0)),
-                payload.get("action_taken", ""),
-                1 if payload.get("message_deleted", False) else 0,
-                1 if payload.get("user_kicked", False) else 0,
-                payload.get("active_labels", ""),
-                payload.get("severity", ""),
-                float(payload.get("latency_ms", 0.0)),
-                payload.get("victim_names", ""),
-                float(payload.get("confidence_score", 0.0)),
-            ),
+            f"INSERT INTO analysis_logs ({col_names}) VALUES ({placeholders})",
+            values,
         )
         conn.commit()
         return int(cursor.lastrowid)
