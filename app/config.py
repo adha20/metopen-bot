@@ -58,6 +58,7 @@ class Settings:
 
     # Database & Policy Settings
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "app.db")
+    latency_log_path: Path = BASE_DIR / os.getenv("LATENCY_LOG_PATH", "data/latency_log.csv")
     run_mode: str = os.getenv("RUN_MODE", "all").lower().strip()
     warning_delete_after_seconds: int = int(os.getenv("WARNING_DELETE_AFTER_SECONDS", "10"))
     kick_violation_threshold: int = int(

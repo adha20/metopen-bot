@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import re
+import time
+from datetime import datetime, timezone
+
 import aiohttp
 import discord
 from discord import Forbidden, HTTPException, Member, Message, TextChannel
@@ -9,6 +11,7 @@ from discord import Forbidden, HTTPException, Member, Message, TextChannel
 from app.config import settings
 from app.database.db import record_user_violation, save_analysis_result
 from app.dashboard.events import broadcaster
+from app.utils.latency_log import log_latency
 
 
 def _display_name(user) -> str:
@@ -23,6 +26,11 @@ def _resolve_victims(message: Message, result: dict) -> list[str]:
     if not names:
         names = [f"@{t}" for t in (str(v).strip("<@!>") for v in result.get("victim_mentions", [])) if t and not t.isdigit()]
     return list(dict.fromkeys(names))
+
+
+def _dataset_labels(result: dict) -> str:
+    """Label terdeteksi persis seperti nama kolom dataset (HS, Abusive, HS_Individual, ...)."""
+    return ", ".join(result.get("active_labels", [])) or "Tidak ada label"
 
 
 async def _call_api_or_local(message: Message) -> dict:
@@ -116,13 +124,12 @@ async def _send_admin_alert_embed(
     if not admin_channel:
         return
 
-    category = result.get("violation_category", "Cyberbullying / Hate Speech")
     severity = result.get("severity", "SEDANG")
 
     color = discord.Color.red() if "BERAT" in severity else discord.Color.orange()
 
     embed = discord.Embed(
-        title=f"🚨 [LAPORAN MODERASI] {category}",
+        title=f"🚨 [LAPORAN MODERASI] {_dataset_labels(result)}",
         description="Pesan melanggar terdeteksi otomatis oleh IndoBERT dan telah disanitasi.",
         color=color,
         timestamp=discord.utils.utcnow(),
@@ -173,6 +180,9 @@ async def _send_admin_alert_embed(
 
 
 async def handle_incoming_message(message: Message) -> None:
+    t_start = time.perf_counter()  # awal pengukuran E2E: bot menerima pesan
+    received_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
     # Abaikan pesan dari bot sendiri atau bot lain
     if message.author.bot:
         return
@@ -185,7 +195,9 @@ async def handle_incoming_message(message: Message) -> None:
         return
 
     # 1. Panggil Inferensi AI (FastAPI / Local Engine)
+    t_infer = time.perf_counter()
     result = await _call_api_or_local(message)
+    inference_ms = (time.perf_counter() - t_infer) * 1000
 
     is_violation = bool(result.get("is_violation", False))
     action_taken = str(result.get("action", "AMAN"))
@@ -193,6 +205,8 @@ async def handle_incoming_message(message: Message) -> None:
     message_deleted = False
     user_kicked = False
     total_violations = 0
+    e2e_ms: float | None = None
+    admin_notify_ms: float | None = None
 
     # Resolusi nama sekali saja: dipakai embed admin, database, dan dashboard
     author_name = _display_name(message.author)
@@ -209,12 +223,14 @@ async def handle_incoming_message(message: Message) -> None:
             user_id=str(message.author.id),
             user_name=author_name,
         )
+        # Akhir E2E (pelanggaran): pesan sudah dihapus & pelanggaran tercatat di SQLite.
+        # Peringatan di channel (+ sleep), kick, dan notifikasi admin sengaja di luar pengukuran utama.
+        e2e_ms = (time.perf_counter() - t_start) * 1000
 
         # Kirim Peringatan Ringan di Channel
         try:
-            category_name = result.get("violation_category", "Ujaran Tidak Pantas")
             warn_msg = await message.channel.send(
-                f"⚠️ {message.author.mention} Pesan Anda telah dihapus karena terindikasi **{category_name}** "
+                f"⚠️ {message.author.mention} Pesan Anda telah dihapus karena terindikasi **{_dataset_labels(result)}** "
                 f"(Pelanggaran ke-{total_violations} dari batas {settings.kick_violation_threshold} kali)."
             )
             # Hapus pesan peringatan bot setelah beberapa detik agar chat tetap bersih
@@ -231,7 +247,7 @@ async def handle_incoming_message(message: Message) -> None:
         ):
             user_kicked = await _kick_member(
                 message.author,
-                reason=f"Telah mencapai batas {total_violations} kali pelanggaran Cyberbullying/Hate Speech.",
+                reason=f"Telah mencapai batas {total_violations} kali pelanggaran ujaran kebencian/kasar (HS/Abusive).",
             )
             if user_kicked:
                 action_taken = "KICKED"
@@ -244,6 +260,7 @@ async def handle_incoming_message(message: Message) -> None:
                     pass
 
         # Aksi 2: Kirim Laporan Audit Lengkap ke Admin (Human-in-the-Loop)
+        t_admin = time.perf_counter()
         await _send_admin_alert_embed(
             message=message,
             result=result,
@@ -253,6 +270,11 @@ async def handle_incoming_message(message: Message) -> None:
             victim_names=victim_names,
             clean_text=clean_text,
         )
+        admin_notify_ms = (time.perf_counter() - t_admin) * 1000
+
+    # Akhir E2E (aman): keputusan moderasi selesai, tidak ada tindakan yang perlu ditunggu.
+    if e2e_ms is None:
+        e2e_ms = (time.perf_counter() - t_start) * 1000
 
     # 3. Simpan Riwayat ke Database SQLite (Audit Trail)
     probs = result.get("probabilities", {})
@@ -279,6 +301,24 @@ async def handle_incoming_message(message: Message) -> None:
         latency_ms=result.get("latency_ms", 0.0),
         victim_names=", ".join(victim_names),
         confidence_score=confidence,
+    )
+
+    if result.get("violation_category") == "Error Inferensi":
+        status = "INFERENCE_ERROR"
+    elif not is_violation:
+        status = "SAFE"
+    else:
+        status = "VIOLATION_DELETED" if message_deleted else "VIOLATION_DELETE_FAILED"
+    log_latency(
+        {
+            "timestamp": received_at,
+            "message_id": message.id,
+            "status": status,
+            "inference_latency_ms": inference_ms,
+            "e2e_latency_ms": e2e_ms,
+            "model_latency_ms": result.get("latency_ms", 0.0),
+            "admin_notify_ms": admin_notify_ms,
+        }
     )
 
     try:
